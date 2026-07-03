@@ -1,0 +1,737 @@
+openapi: 3.0.3
+info:
+  title: Smart Money Discovery Platform API
+  description: >
+    Read-only REST API over the Dashboard Query Layer (src/dashboard/).
+    Every endpoint described here calls a Dashboard Query Layer function
+    exclusively — never Supabase directly (see src/api/index.ts). No
+    authentication, caching, or rate limiting is implemented at this
+    layer.
+  version: "1.0.0"
+servers:
+  - url: /api
+
+paths:
+  /home:
+    get:
+      summary: Landing-page sections
+      description: >
+        Calls getWeeklyPicks, getTopFunds, getNewFunding, and
+        getUnlockAlerts (src/dashboard/home.ts) in parallel, each capped by
+        the same `limit` query parameter.
+      operationId: getHome
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Applied to every section. Defaults to 10, clamped to a maximum of 50.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 10
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/HomeData"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /projects/{slug}:
+    get:
+      summary: Project detail (overview, funding, metrics, unlocks)
+      description: >
+        Calls getProjectOverview, getProjectFunding, getProjectMetrics, and
+        getProjectUnlocks (src/dashboard/project.ts). Returns 404 if the
+        slug doesn't resolve to a project.
+      operationId: getProject
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: aave-v3
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProjectData"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /funds/{slug}:
+    get:
+      summary: Fund detail (overview, paginated portfolio, portfolio insights)
+      description: >
+        Calls getFundOverview, getFundPortfolio, and getFundInsights
+        (src/dashboard/fund.ts). getFundPortfolio returns its complete
+        project list with no limit of its own, so the pagination applied
+        here is an exact, in-memory slice of that full list — `totalItems`
+        is a true count, not a bounded-window estimate. Returns 404 if the
+        slug doesn't resolve to a fund.
+      operationId: getFund
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+          example: a16z-crypto
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/FundData"
+                      pagination:
+                        $ref: "#/components/schemas/PaginationMeta"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /search:
+    get:
+      summary: Search projects and/or funds
+      description: >
+        Calls searchProjects and/or searchFunds (src/dashboard/search.ts)
+        depending on `type`. Both dashboard functions already cap
+        themselves at 25 rows each, so pagination here slices that
+        already-fetched, already-capped set — `totalItems` per list is
+        exact within that cap, not a true database-wide match count. Note
+        this endpoint nests its pagination meta inside `data.pagination`
+        (one object per list) rather than using the top-level `pagination`
+        envelope field, since it returns two independent lists.
+      operationId: search
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search term. Required — a missing or blank value returns 400.
+          schema:
+            type: string
+          example: aave
+        - name: type
+          in: query
+          required: false
+          description: Narrows results to one list. Defaults to `all` (both lists populated).
+          schema:
+            type: string
+            enum: [all, projects, funds]
+            default: all
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/SearchData"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /rankings/weekly:
+    get:
+      summary: Weekly project rankings
+      description: >
+        Calls getWeeklyPicks (src/dashboard/home.ts), which reads
+        weekly_rankings_mv. getWeeklyPicks only accepts a `limit` (no
+        offset/count), so this endpoint fetches `page * pageSize` rows
+        (capped at 200) and paginates that window in memory —
+        `totalItems`/`totalPages` describe the fetched window, not a true
+        database-wide row count.
+      operationId: getWeeklyRankings
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/WeeklyPick"
+                      pagination:
+                        $ref: "#/components/schemas/PaginationMeta"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /rankings/monthly:
+    get:
+      summary: Monthly project rankings
+      description: >
+        Calls getMonthlyPicks (src/dashboard/home.ts), which reads
+        monthly_rankings_mv. Symmetrical with /rankings/weekly, including
+        the same fetch-window pagination caveat.
+      operationId: getMonthlyRankings
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ApiSuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/MonthlyPick"
+                      pagination:
+                        $ref: "#/components/schemas/PaginationMeta"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+components:
+  parameters:
+    Page:
+      name: page
+      in: query
+      required: false
+      description: 1-indexed page number. Defaults to 1; invalid/non-positive values fall back to the default.
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      name: pageSize
+      in: query
+      required: false
+      description: Items per page. Defaults to 20, clamped to a maximum of 100.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+  responses:
+    BadRequest:
+      description: Bad Request — e.g. a required query parameter was missing or blank.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiErrorEnvelope"
+          example:
+            success: false
+            error:
+              code: BAD_REQUEST
+              message: 'Query parameter "q" is required.'
+    NotFound:
+      description: Not Found — the requested slug doesn't resolve to a resource.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiErrorEnvelope"
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: No project found for slug "does-not-exist".
+    InternalError:
+      description: >
+        Internal Server Error — an unexpected failure (e.g. a Dashboard
+        Query Layer or database error). The underlying message is logged
+        server-side, never echoed to the client.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiErrorEnvelope"
+          example:
+            success: false
+            error:
+              code: INTERNAL_ERROR
+              message: An unexpected error occurred.
+
+  schemas:
+    # -------------------------------------------------------------------
+    # Envelopes
+    # -------------------------------------------------------------------
+    ApiSuccessEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success:
+          type: boolean
+          enum: [true]
+        data: {}
+        pagination:
+          $ref: "#/components/schemas/PaginationMeta"
+
+    ApiErrorEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success:
+          type: boolean
+          enum: [false]
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: >
+                Stable machine-readable error code. Concrete values
+                produced today: BAD_REQUEST (400), NOT_FOUND (404),
+                INTERNAL_ERROR (500). NOT_IMPLEMENTED (501) is defined in
+                src/api/errors.ts but no current route uses it.
+              example: NOT_FOUND
+            message:
+              type: string
+              example: No project found for slug "does-not-exist".
+
+    PaginationMeta:
+      type: object
+      description: >
+        Always describes the array actually paginated in memory by
+        src/api/pagination.ts's paginateArray — exact when the underlying
+        Dashboard Query Layer call already returned its complete result
+        set (funds portfolio, search), a bounded-window approximation
+        otherwise (rankings) — see each endpoint's description.
+      required: [page, pageSize, totalItems, totalPages, hasNextPage, hasPreviousPage]
+      properties:
+        page:
+          type: integer
+          example: 1
+        pageSize:
+          type: integer
+          example: 20
+        totalItems:
+          type: integer
+          example: 47
+        totalPages:
+          type: integer
+          example: 3
+        hasNextPage:
+          type: boolean
+        hasPreviousPage:
+          type: boolean
+
+    # -------------------------------------------------------------------
+    # /home
+    # -------------------------------------------------------------------
+    HomeData:
+      type: object
+      properties:
+        weeklyPicks:
+          type: array
+          items:
+            $ref: "#/components/schemas/WeeklyPick"
+        topFunds:
+          type: array
+          items:
+            $ref: "#/components/schemas/TopFund"
+        newFunding:
+          type: array
+          items:
+            $ref: "#/components/schemas/NewFunding"
+        unlockAlerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnlockAlert"
+
+    WeeklyPick:
+      type: object
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        rank: { type: integer }
+        totalScore: { type: number, nullable: true }
+        grade:
+          allOf:
+            - $ref: "#/components/schemas/Grade"
+          nullable: true
+        tvlUsd: { type: number, nullable: true }
+        marketCapUsd: { type: number, nullable: true }
+        priceChange24hPercent: { type: number, nullable: true }
+        tvlChangePercent:
+          type: number
+          nullable: true
+          description: 7-day TVL change, paired with "weekly" picks rather than the 1-day figure.
+        weekStart: { type: string, format: date }
+
+    MonthlyPick:
+      type: object
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        rank: { type: integer }
+        totalScore: { type: number, nullable: true }
+        grade:
+          allOf:
+            - $ref: "#/components/schemas/Grade"
+          nullable: true
+        tvlUsd: { type: number, nullable: true }
+        marketCapUsd: { type: number, nullable: true }
+        priceChange24hPercent: { type: number, nullable: true }
+        tvlChangePercent:
+          type: number
+          nullable: true
+          description: 7-day TVL change — project_metrics has no 30-day TVL-change column.
+        monthStart: { type: string, format: date }
+
+    TopFund:
+      type: object
+      properties:
+        fundId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        portfolioProjectCount: { type: integer }
+        avgInvestorScore: { type: number, nullable: true }
+        rank: { type: integer }
+
+    NewFunding:
+      type: object
+      properties:
+        fundingRoundId: { type: string, format: uuid }
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        roundType: { type: string, nullable: true }
+        amountRaisedUsd: { type: number, nullable: true }
+        fdvUsd: { type: number, nullable: true }
+        announcedDate: { type: string, format: date, nullable: true }
+        investorNames:
+          type: array
+          items: { type: string }
+
+    UnlockAlert:
+      type: object
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        unlockDate: { type: string, format: date }
+        unlockType: { type: string, nullable: true }
+        amountTokens: { type: number, nullable: true }
+        amountUsd: { type: number, nullable: true }
+        percentOfSupply: { type: number, nullable: true }
+
+    # -------------------------------------------------------------------
+    # /projects/{slug}
+    # -------------------------------------------------------------------
+    ProjectData:
+      type: object
+      properties:
+        overview:
+          $ref: "#/components/schemas/ProjectOverview"
+        funding:
+          $ref: "#/components/schemas/ProjectFunding"
+        metrics:
+          $ref: "#/components/schemas/ProjectMetrics"
+        unlocks:
+          $ref: "#/components/schemas/ProjectUnlocks"
+
+    ProjectOverview:
+      type: object
+      description: >
+        No `chain` field — the projects table has no chain/network column
+        and ingestion never populates `metadata` with one, so there is no
+        honest source for it without a schema change.
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        ticker: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        logoUrl: { type: string, nullable: true }
+        website: { type: string, nullable: true }
+        twitter: { type: string, nullable: true }
+        score:
+          allOf:
+            - $ref: "#/components/schemas/ScoreSummary"
+          nullable: true
+        rank: { type: integer, nullable: true }
+
+    ScoreSummary:
+      type: object
+      properties:
+        totalScore: { type: number, nullable: true }
+        fundingScore: { type: number, nullable: true }
+        investorScore: { type: number, nullable: true }
+        marketScore: { type: number, nullable: true }
+        tvlScore: { type: number, nullable: true }
+        revenueScore: { type: number, nullable: true }
+        unlockScore: { type: number, nullable: true }
+        momentumScore: { type: number, nullable: true }
+        grade:
+          allOf:
+            - $ref: "#/components/schemas/Grade"
+          nullable: true
+          description: Derived from totalScore via the scoring engine's existing gradeFromScore — never recomputed differently server-side. Null whenever totalScore is null.
+        scoreDate: { type: string, format: date, nullable: true }
+
+    Grade:
+      type: string
+      enum: ["A+", "A", "B", "C", "D"]
+
+    ProjectFunding:
+      type: object
+      nullable: true
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        totalRaisedUsd: { type: number, nullable: true }
+        rounds:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectFundingRound"
+
+    ProjectFundingRound:
+      type: object
+      properties:
+        fundingRoundId: { type: string, format: uuid }
+        roundType: { type: string, nullable: true }
+        amountRaisedUsd: { type: number, nullable: true }
+        fdvUsd: { type: number, nullable: true }
+        announcedDate: { type: string, format: date, nullable: true }
+        investors:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectFundingInvestor"
+
+    ProjectFundingInvestor:
+      type: object
+      description: >
+        No "lead investor" designation — funding_investors has no is_lead
+        flag in the schema, so this is every investor in the round with no
+        defined order.
+      properties:
+        fundId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+
+    ProjectMetrics:
+      type: object
+      nullable: true
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        marketCapUsd: { type: number, nullable: true }
+        fdvUsd: { type: number, nullable: true }
+        price: { type: number, nullable: true }
+        volume24hUsd: { type: number, nullable: true }
+        marketCapRank: { type: integer, nullable: true }
+        priceChange24hPercent: { type: number, nullable: true }
+        priceChange7dPercent: { type: number, nullable: true }
+        priceChange30dPercent: { type: number, nullable: true }
+        ath: { type: number, nullable: true }
+        atl: { type: number, nullable: true }
+        tvlUsd: { type: number, nullable: true }
+        tvlChange1dPercent: { type: number, nullable: true }
+        tvlChange7dPercent: { type: number, nullable: true }
+        revenue24hUsd: { type: number, nullable: true }
+        revenue30dUsd: { type: number, nullable: true }
+        fees24hUsd: { type: number, nullable: true }
+        fees30dUsd: { type: number, nullable: true }
+        circulatingSupply: { type: number, nullable: true }
+        totalSupply: { type: number, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
+
+    ProjectUnlocks:
+      type: object
+      nullable: true
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        unlocks:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectUnlockEvent"
+
+    ProjectUnlockEvent:
+      type: object
+      properties:
+        unlockDate: { type: string, format: date }
+        unlockType: { type: string, nullable: true }
+        amountTokens: { type: number, nullable: true }
+        amountUsd: { type: number, nullable: true }
+        percentOfSupply: { type: number, nullable: true }
+
+    # -------------------------------------------------------------------
+    # /funds/{slug}
+    # -------------------------------------------------------------------
+    FundData:
+      type: object
+      properties:
+        overview:
+          $ref: "#/components/schemas/FundOverview"
+        portfolio:
+          type: object
+          properties:
+            fundId: { type: string, format: uuid }
+            slug: { type: string }
+            projects:
+              type: array
+              items:
+                $ref: "#/components/schemas/FundPortfolioProject"
+        insights:
+          allOf:
+            - $ref: "#/components/schemas/FundInsights"
+          nullable: true
+
+    FundOverview:
+      type: object
+      description: >
+        No `activeInvestments`/`leadInvestments`/`activityStatus` — the
+        schema has no investment-status column and no defined "active"
+        recency threshold. `lastInvestmentDate` below is the real data
+        point a future activityStatus could be built on once that
+        threshold is defined.
+      properties:
+        fundId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        website: { type: string, nullable: true }
+        twitter: { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        portfolioProjectCount: { type: integer, nullable: true }
+        avgInvestorScore: { type: number, nullable: true }
+        rank: { type: integer, nullable: true }
+        lastInvestmentDate:
+          type: string
+          format: date
+          nullable: true
+          description: From the fund_leaderboard view — most recent funding_rounds.announced_date among this fund's investments.
+
+    FundInsights:
+      type: object
+      description: >
+        Real aggregates over the fund's own funding_rounds/portfolio — no
+        invented values. No topChains — no chain/network column exists
+        anywhere on projects.
+      properties:
+        fundId: { type: string, format: uuid }
+        slug: { type: string }
+        topCategories:
+          type: array
+          items: { type: string }
+          description: Portfolio projects' category values, most frequent first.
+        mostCommonRoundType: { type: string, nullable: true }
+        largestInvestmentUsd: { type: number, nullable: true }
+        dealsThisMonthCount: { type: integer }
+
+    FundPortfolioProject:
+      type: object
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        roundType: { type: string, nullable: true }
+        announcedDate: { type: string, format: date, nullable: true }
+        totalScore: { type: number, nullable: true }
+
+    # -------------------------------------------------------------------
+    # /search
+    # -------------------------------------------------------------------
+    SearchData:
+      type: object
+      properties:
+        query: { type: string }
+        type:
+          type: string
+          enum: [all, projects, funds]
+        projects:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProjectSearchResult"
+        funds:
+          type: array
+          items:
+            $ref: "#/components/schemas/FundSearchResult"
+        pagination:
+          type: object
+          description: One PaginationMeta per list, since this endpoint returns two independent lists.
+          properties:
+            projects:
+              $ref: "#/components/schemas/PaginationMeta"
+            funds:
+              $ref: "#/components/schemas/PaginationMeta"
+
+    ProjectSearchResult:
+      type: object
+      properties:
+        projectId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        ticker: { type: string, nullable: true }
+        logoUrl: { type: string, nullable: true }
+        totalScore: { type: number, nullable: true }
+        grade:
+          allOf:
+            - $ref: "#/components/schemas/Grade"
+          nullable: true
+        tvlUsd: { type: number, nullable: true }
+        marketCapUsd: { type: number, nullable: true }
+        priceChange24hPercent: { type: number, nullable: true }
+
+    FundSearchResult:
+      type: object
+      description: >
+        No recentInvestmentCount — that needs a defined "recent" time
+        window with no existing rule in this codebase to base it on.
+      properties:
+        fundId: { type: string, format: uuid }
+        slug: { type: string }
+        name: { type: string }
+        logoUrl: { type: string, nullable: true }
+        portfolioProjectCount:
+          type: integer
+          nullable: true
+          description: From the top_funds view. Null if the fund has no top_funds row yet.

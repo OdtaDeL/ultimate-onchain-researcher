@@ -1,0 +1,165 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/*
+ * Design tokens — mirrors DESIGN_SYSTEM.md Section 5 (Color), Section 6
+ * (Radius), Section 7 (Elevation). Pattern verified against Tailwind v4's
+ * theme docs (https://tailwindcss.com/docs/theme): plain semantic variables
+ * live on `:root`/`.dark` (the shadcn convention for theme-switching), then
+ * an `@theme inline` block re-exposes them under Tailwind's `--color-*`
+ * namespace so utilities like `bg-surface`/`text-foreground` are generated
+ * from them, per the docs' own "Referencing Other Variables (inline)" example.
+ *
+ * `:root` holds the LIGHT theme (secondary, equally-premium per DESIGN_SYSTEM
+ * Section 1) as the semantic baseline; `.dark` overrides it. AppContainer
+ * applies `.dark` by default since dark is this product's primary theme.
+ */
+
+:root {
+  /* Neutral scale — light theme */
+  --bg: oklch(0.98 0.003 90);
+  --surface: oklch(1 0 0);
+  --surface-elevated: oklch(1 0 0);
+  --border: oklch(0.9 0 0);
+  --foreground: oklch(0.145 0 0);
+  --muted-foreground: oklch(0.45 0 0);
+  --tertiary: oklch(0.6 0 0);
+
+  /* Accent — single indigo-violet hue, used sparingly (DESIGN_SYSTEM Section 5 "Hard rule") */
+  --accent: oklch(0.58 0.19 276);
+  --accent-foreground: oklch(0.98 0 0);
+
+  /* Semantic */
+  --success: oklch(0.65 0.18 145);
+  --warning: oklch(0.75 0.16 70);
+  --danger: oklch(0.63 0.24 25);
+  --info: oklch(0.62 0.13 230);
+
+  /* Bullish/bearish alias success/danger — never break this mapping (Section 5) */
+  --bullish: var(--success);
+  --bearish: var(--danger);
+
+  /* Score grade colors — distinct from accent and from each other */
+  --score-a: var(--success);
+  --score-b: oklch(0.68 0.11 200);
+  --score-c: var(--warning);
+  --score-d: var(--danger);
+
+  /* Fear & Greed 5-band gradient */
+  --fng-1: oklch(0.55 0.22 25);
+  --fng-2: oklch(0.68 0.18 50);
+  --fng-3: oklch(0.75 0.05 90);
+  --fng-4: oklch(0.78 0.16 120);
+  --fng-5: oklch(0.72 0.19 145);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  --shadow-raised: 0 1px 3px 0 oklch(0 0 0 / 0.08), 0 1px 2px -1px oklch(0 0 0 / 0.08);
+}
+
+.dark {
+  /* Neutral scale — dark theme (primary): near-black, not pure black */
+  --bg: oklch(0.145 0 0);
+  --surface: oklch(0.205 0 0);
+  --surface-elevated: oklch(0.269 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --foreground: oklch(0.985 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --tertiary: oklch(0.5 0 0);
+
+  --accent: oklch(0.65 0.19 276);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --success: oklch(0.72 0.18 145);
+  --warning: oklch(0.77 0.16 70);
+  --danger: oklch(0.68 0.21 25);
+  --info: oklch(0.68 0.13 230);
+
+  --bullish: var(--success);
+  --bearish: var(--danger);
+
+  --score-a: var(--success);
+  --score-b: oklch(0.72 0.1 200);
+  --score-c: var(--warning);
+  --score-d: var(--danger);
+
+  --fng-1: oklch(0.6 0.22 25);
+  --fng-2: oklch(0.7 0.18 50);
+  --fng-3: oklch(0.7 0.04 90);
+  --fng-4: oklch(0.78 0.16 120);
+  --fng-5: oklch(0.75 0.19 145);
+
+  --shadow-raised: none;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-border: var(--border);
+  --color-foreground: var(--foreground);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-tertiary: var(--tertiary);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+
+  --color-bullish: var(--bullish);
+  --color-bearish: var(--bearish);
+
+  --color-score-a: var(--score-a);
+  --color-score-b: var(--score-b);
+  --color-score-c: var(--score-c);
+  --color-score-d: var(--score-d);
+
+  --color-fng-1: var(--fng-1);
+  --color-fng-2: var(--fng-2);
+  --color-fng-3: var(--fng-3);
+  --color-fng-4: var(--fng-4);
+  --color-fng-5: var(--fng-5);
+
+  --shadow-raised: var(--shadow-raised);
+}
+
+/* Shimmer sweep for Skeleton — keep `1200ms` in sync with `shimmerDurationMs` in src/lib/theme/animation.ts. */
+@theme {
+  --animate-shimmer: shimmer 1200ms ease-in-out infinite;
+
+  @keyframes shimmer {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+}
+
+@layer base {
+  body {
+    @apply bg-bg text-foreground antialiased;
+    font-family: -apple-system, "SF Pro Text", "Roboto", "Segoe UI", system-ui, sans-serif;
+  }
+
+  /*
+   * Keyboard-focus ring — DESIGN_SYSTEM.md a11y "Touch Targets"/focus-states
+   * guideline had no implementation anywhere in the app until now. `:focus-visible`
+   * (not `:focus`) so the ring only appears for keyboard/assistive navigation,
+   * never on a touch/pointer tap — verified against MDN's :focus-visible spec
+   * (https://developer.mozilla.org/en-US/docs/Web/CSS/:focus-visible).
+   */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+}
