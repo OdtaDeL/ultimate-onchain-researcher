@@ -8,6 +8,10 @@
 // /api/search has no "platforms" concept at all (searchProjects/
 // searchFunds only).
 //
+// Pagination: Projects and Funds each use page-based pagination
+// (SEARCH_PAGE_SIZE items on page 1). Use fetchMoreSearchProjects /
+// fetchMoreSearchFunds to append subsequent pages.
+//
 // Funds: FundSearchResultDto carries portfolioProjectCount (nullable) —
 // funds with null portfolioProjectCount are dropped (honest-drop, same
 // convention as mapSearchResultToProjectRow). recentInvestmentCount is
@@ -17,33 +21,41 @@
 import type { ProjectRowCardProps, FundRowCardProps, PlatformRowCardProps } from "@/components/features/markets";
 import { mockMarketsPlatforms } from "@/components/features/markets/mock-data";
 import { mockTrendingSearches } from "@/components/features/search/mock-data";
-import { apiFetch } from "../client";
+import { apiFetchPaginated } from "../client";
 import type { FundSearchResultDto, ProjectSearchResultDto } from "../dto";
+
+export type SearchProjectRow = Omit<ProjectRowCardProps, "isLoading" | "onPress">;
+export type SearchFundRow = Omit<FundRowCardProps, "isLoading" | "onPress">;
 
 export interface SearchData {
   query: string;
-  projects: Omit<ProjectRowCardProps, "isLoading" | "onPress">[];
-  funds: Omit<FundRowCardProps, "isLoading" | "onPress">[];
+  projects: SearchProjectRow[];
+  funds: SearchFundRow[];
   platforms: Omit<PlatformRowCardProps, "isLoading" | "onPress">[];
   trendingSearches: string[];
+  /** Next page to fetch for projects results, or null when all loaded. */
+  projectsNextPage: number | null;
+  /** Next page to fetch for funds results, or null when all loaded. */
+  fundsNextPage: number | null;
 }
-
-type ProjectRow = Omit<ProjectRowCardProps, "isLoading" | "onPress">;
-type FundRow = Omit<FundRowCardProps, "isLoading" | "onPress">;
 
 /** Shape of the fields this source reads from GET /api/search's response data with type=projects. */
 interface SearchProjectsResponseData {
   projects: ProjectSearchResultDto[];
+  pagination: { projects: { hasNextPage: boolean } };
 }
 
 /** Shape of the fields this source reads from GET /api/search's response data with type=funds. */
 interface SearchFundsResponseData {
   funds: FundSearchResultDto[];
+  pagination: { funds: { hasNextPage: boolean } };
 }
 
 function matches(name: string, query: string): boolean {
   return name.toLowerCase().includes(query.toLowerCase());
 }
+
+const SEARCH_PAGE_SIZE = 20;
 
 /**
  * Maps a project search result to a Projects-row, or `null` if any field
@@ -51,7 +63,7 @@ function matches(name: string, query: string): boolean {
  * change) isn't available for this project yet — same honest-drop
  * convention as src/lib/api/sources/markets.ts's mapWeeklyPickToProjectRow.
  */
-function mapSearchResultToProjectRow(result: ProjectSearchResultDto): ProjectRow | null {
+function mapSearchResultToProjectRow(result: ProjectSearchResultDto): SearchProjectRow | null {
   if (
     result.totalScore === null ||
     result.grade === null ||
@@ -73,7 +85,7 @@ function mapSearchResultToProjectRow(result: ProjectSearchResultDto): ProjectRow
   };
 }
 
-function mapSearchResultToFundRow(result: FundSearchResultDto): FundRow | null {
+function mapSearchResultToFundRow(result: FundSearchResultDto): SearchFundRow | null {
   if (result.portfolioProjectCount === null) return null;
   return {
     slug: result.slug,
@@ -86,38 +98,76 @@ function mapSearchResultToFundRow(result: FundSearchResultDto): FundRow | null {
 // Throws on failure — callers must handle errors. Error propagates through
 // useQuery to the page, which renders ErrorState + Retry instead of
 // silently falling back to stale mock data.
-async function fetchRealProjectResults(query: string, signal?: AbortSignal): Promise<ProjectRow[]> {
-  const data = await apiFetch<SearchProjectsResponseData>("/api/search", {
-    searchParams: { q: query, type: "projects" },
+async function fetchRealProjectResults(
+  query: string,
+  page: number,
+  signal?: AbortSignal,
+): Promise<{ rows: SearchProjectRow[]; hasNextPage: boolean }> {
+  const { data } = await apiFetchPaginated<SearchProjectsResponseData>("/api/search", {
+    searchParams: { q: query, type: "projects", page, pageSize: SEARCH_PAGE_SIZE },
     signal,
   });
-  return data.projects.map(mapSearchResultToProjectRow).filter((row): row is ProjectRow => row !== null);
+  const rows = data.projects.map(mapSearchResultToProjectRow).filter((row): row is SearchProjectRow => row !== null);
+  return { rows, hasNextPage: data.pagination.projects.hasNextPage };
 }
 
-async function fetchRealFundResults(query: string, signal?: AbortSignal): Promise<FundRow[]> {
-  const data = await apiFetch<SearchFundsResponseData>("/api/search", {
-    searchParams: { q: query, type: "funds" },
+async function fetchRealFundResults(
+  query: string,
+  page: number,
+  signal?: AbortSignal,
+): Promise<{ rows: SearchFundRow[]; hasNextPage: boolean }> {
+  const { data } = await apiFetchPaginated<SearchFundsResponseData>("/api/search", {
+    searchParams: { q: query, type: "funds", page, pageSize: SEARCH_PAGE_SIZE },
     signal,
   });
-  return data.funds.map(mapSearchResultToFundRow).filter((row): row is FundRow => row !== null);
+  const rows = data.funds.map(mapSearchResultToFundRow).filter((row): row is SearchFundRow => row !== null);
+  return { rows, hasNextPage: data.pagination.funds.hasNextPage };
+}
+
+/** Fetches a subsequent page of project search results. Append `rows` to the existing list. */
+export async function fetchMoreSearchProjects(
+  query: string,
+  page: number,
+  signal?: AbortSignal,
+): Promise<{ rows: SearchProjectRow[]; hasNextPage: boolean }> {
+  return fetchRealProjectResults(query, page, signal);
+}
+
+/** Fetches a subsequent page of fund search results. Append `rows` to the existing list. */
+export async function fetchMoreSearchFunds(
+  query: string,
+  page: number,
+  signal?: AbortSignal,
+): Promise<{ rows: SearchFundRow[]; hasNextPage: boolean }> {
+  return fetchRealFundResults(query, page, signal);
 }
 
 export async function fetchSearchData(query: string, signal?: AbortSignal): Promise<SearchData> {
   const trimmed = query.trim();
   if (!trimmed) {
-    return { query: trimmed, projects: [], funds: [], platforms: [], trendingSearches: mockTrendingSearches };
+    return {
+      query: trimmed,
+      projects: [],
+      funds: [],
+      platforms: [],
+      trendingSearches: mockTrendingSearches,
+      projectsNextPage: null,
+      fundsNextPage: null,
+    };
   }
 
-  const [realProjects, realFunds] = await Promise.all([
-    fetchRealProjectResults(trimmed, signal),
-    fetchRealFundResults(trimmed, signal),
+  const [projectsResult, fundsResult] = await Promise.all([
+    fetchRealProjectResults(trimmed, 1, signal),
+    fetchRealFundResults(trimmed, 1, signal),
   ]);
 
   return {
     query: trimmed,
-    projects: realProjects,
-    funds: realFunds,
+    projects: projectsResult.rows,
+    funds: fundsResult.rows,
     platforms: mockMarketsPlatforms.filter((p) => matches(p.protocol, trimmed)),
     trendingSearches: mockTrendingSearches,
+    projectsNextPage: projectsResult.hasNextPage ? 2 : null,
+    fundsNextPage: fundsResult.hasNextPage ? 2 : null,
   };
 }

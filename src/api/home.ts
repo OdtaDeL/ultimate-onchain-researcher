@@ -6,7 +6,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../types/database.types";
-import { getMonthlyPicks, getNewFunding, getTopFunds, getUnlockAlerts, getWeeklyPicks } from "../dashboard/home";
+import { getMarketOverview, getMonthlyPicks, getNewFunding, getRecentlyAdded, getTopFunds, getTopGainers, getUnlockAlerts, getWeeklyPicks } from "../dashboard/home";
 import { toErrorResponse } from "./errors";
 import { parseLimitParam } from "./pagination";
 import { successResponse } from "./response";
@@ -20,15 +20,18 @@ export async function handleGetHome(request: Request, supabase: SupabaseClient<D
     const url = new URL(request.url);
     const limit = parseLimitParam(url.searchParams, DEFAULT_LIMIT, MAX_LIMIT);
 
-    const [weeklyPicks, monthlyPicks, topFunds, newFunding, unlockAlerts] = await Promise.all([
+    const [weeklyPicks, monthlyPicks, topFunds, topGainers, recentlyAdded, newFunding, unlockAlerts, marketOverview] = await Promise.all([
       getWeeklyPicks(supabase, limit),
       getMonthlyPicks(supabase, limit),
       getTopFunds(supabase, limit),
+      getTopGainers(supabase, limit),
+      getRecentlyAdded(supabase, limit),
       getNewFunding(supabase, limit),
       getUnlockAlerts(supabase, limit),
+      getMarketOverview(supabase),
     ]);
 
-    return successResponse({ weeklyPicks, monthlyPicks, topFunds, newFunding, unlockAlerts });
+    return successResponse({ weeklyPicks, monthlyPicks, topFunds, topGainers, recentlyAdded, newFunding, unlockAlerts, marketOverview });
   } catch (error) {
     return toErrorResponse(error);
   }

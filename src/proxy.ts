@@ -84,6 +84,14 @@ async function verifyTelegramInitData(initData: string, botToken: string): Promi
 }
 
 export async function proxy(request: NextRequest): Promise<NextResponse> {
+  // ── Health check bypass ──────────────────────────────────────────────────
+  // /api/health is a liveness probe for Vercel / load balancers. It must
+  // respond 200 unconditionally — before rate limiting and before Telegram
+  // auth — so it never returns 429 or 401 under any condition.
+  if (request.nextUrl.pathname === "/api/health") {
+    return NextResponse.next();
+  }
+
   // ── Rate limiting ────────────────────────────────────────────────────────
   const ip = getClientIp(request);
   const now = Date.now();

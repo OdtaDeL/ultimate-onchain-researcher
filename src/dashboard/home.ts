@@ -11,7 +11,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../types/database.types";
 import { deriveGrade } from "./types";
-import type { MonthlyPickDto, NewFundingDto, TopFundDto, UnlockAlertDto, WeeklyPickDto } from "./types";
+import type { MarketOverviewAssetDto, MarketOverviewDto, MonthlyPickDto, NewFundingDto, RecentlyAddedDto, TopFundDto, TopGainerDto, UnlockAlertDto, WeeklyPickDto } from "./types";
 
 /** Shape of the project_metrics columns every ranked-project DTO below joins in for market-metric fields (tvl/marketCap/24h change/7d TVL change) and the grade derived from project_scores. */
 interface RankedProjectMetrics {
@@ -166,6 +166,114 @@ export async function getTopFunds(
       };
     })
     .filter((x): x is TopFundDto => x !== null);
+}
+
+/** Projects with the highest 24h price change, descending. Excludes projects with no price_change_24h in project_metrics. */
+export async function getTopGainers(
+  supabase: SupabaseClient<Database>,
+  limit: number = 10,
+): Promise<TopGainerDto[]> {
+  const { data: metrics, error } = await supabase
+    .from("project_metrics")
+    .select("project_id, price_change_24h")
+    .not("price_change_24h", "is", null)
+    .order("price_change_24h", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getTopGainers: failed to load project_metrics: ${error.message}`);
+  if (metrics.length === 0) return [];
+
+  const projectIds = metrics.map((m) => m.project_id);
+  const { data: projects, error: projectsError } = await supabase
+    .from("projects")
+    .select("id, slug, name, logo_url")
+    .in("id", projectIds);
+  if (projectsError) throw new Error(`getTopGainers: failed to load projects: ${projectsError.message}`);
+
+  const projectById = new Map(projects.map((p) => [p.id, p]));
+  return metrics
+    .map((m): TopGainerDto | null => {
+      const project = projectById.get(m.project_id);
+      if (!project || m.price_change_24h === null) return null;
+      return {
+        projectId: m.project_id,
+        slug: project.slug,
+        name: project.name,
+        logoUrl: project.logo_url,
+        priceChange24hPercent: m.price_change_24h,
+      };
+    })
+    .filter((x): x is TopGainerDto => x !== null);
+}
+
+/** Most recently onboarded projects, newest first. */
+export async function getRecentlyAdded(
+  supabase: SupabaseClient<Database>,
+  limit: number = 10,
+): Promise<RecentlyAddedDto[]> {
+  const { data, error } = await supabase
+    .from("projects")
+    .select("id, slug, name, logo_url, category, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) throw new Error(`getRecentlyAdded: failed to load projects: ${error.message}`);
+  return data.map((p) => ({
+    projectId: p.id,
+    slug: p.slug,
+    name: p.name,
+    logoUrl: p.logo_url,
+    category: p.category,
+    createdAt: p.created_at,
+  }));
+}
+
+/**
+ * Aggregate market overview: top-N projects by market cap (as named assets),
+ * plus total market cap and weighted 24h change across all tracked projects.
+ * Returns null when project_metrics has no rows with market_cap + price set.
+ */
+export async function getMarketOverview(
+  supabase: SupabaseClient<Database>,
+  limit: number = 3,
+): Promise<MarketOverviewDto | null> {
+  const { data: metrics, error } = await supabase
+    .from("project_metrics")
+    .select("project_id, market_cap, price, price_change_24h")
+    .not("market_cap", "is", null)
+    .not("price", "is", null)
+    .not("price_change_24h", "is", null);
+  if (error) throw new Error(`getMarketOverview: failed to load project_metrics: ${error.message}`);
+  if (metrics.length === 0) return null;
+
+  // PostgREST filter narrowing doesn't remove null from the TS type; the .not() filters above guarantee these are numbers.
+  const valid = metrics as Array<{ project_id: string; market_cap: number; price: number; price_change_24h: number }>;
+  const sorted = [...valid].sort((a, b) => b.market_cap - a.market_cap);
+  const totalMarketCapUsd = valid.reduce((sum, m) => sum + m.market_cap, 0);
+  const topN = sorted.slice(0, limit);
+  const totalMarketCapChangePercent24h = topN.reduce((sum, m) => sum + m.price_change_24h, 0) / topN.length;
+
+  const topNIds = topN.map((m) => m.project_id);
+  const { data: projects, error: projectsError } = await supabase
+    .from("projects")
+    .select("id, ticker, logo_url")
+    .in("id", topNIds);
+  if (projectsError) throw new Error(`getMarketOverview: failed to load projects: ${projectsError.message}`);
+
+  const projectById = new Map(projects.map((p) => [p.id, p]));
+  const assets = topN
+    .map((m): MarketOverviewAssetDto | null => {
+      const project = projectById.get(m.project_id);
+      if (!project?.ticker) return null;
+      return {
+        symbol: project.ticker,
+        logoUrl: project.logo_url,
+        priceUsd: m.price,
+        changePercent24h: m.price_change_24h,
+      };
+    })
+    .filter((a): a is MarketOverviewAssetDto => a !== null);
+
+  if (assets.length === 0) return null;
+  return { assets, totalMarketCapUsd, totalMarketCapChangePercent24h };
 }
 
 /** Most recently announced funding rounds, with investor names attached. */

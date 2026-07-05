@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/api/__tests__/home.test.ts src/api/__tests__/project.test.ts src/api/__tests__/fund.test.ts src/api/__tests__/search.test.ts src/api/__tests__/rankings.test.ts",
+    "test": "tsx --test src/api/__tests__/health.test.ts src/api/__tests__/cron.test.ts src/api/__tests__/home.test.ts src/api/__tests__/project.test.ts src/api/__tests__/fund.test.ts src/api/__tests__/search.test.ts src/api/__tests__/rankings.test.ts",
     "sync:bootstrap": "tsx src/cli/chainbroker-sync.ts bootstrap",
     "sync:projects": "tsx src/cli/chainbroker-sync.ts projects",
     "sync:funds": "tsx src/cli/chainbroker-sync.ts funds",

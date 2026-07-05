@@ -4,7 +4,7 @@ import { create } from "zustand";
 // interaction state the Home screen owns. Not persisted: which tab was
 // open last session isn't meaningful to restore (it's a glance-level
 // browsing choice, not a saved preference).
-export type TrendingTab = "projects" | "funds" | "platforms";
+export type TrendingTab = "projects" | "funds";
 
 interface HomeState {
   trendingTab: TrendingTab;

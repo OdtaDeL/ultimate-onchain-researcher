@@ -6,7 +6,7 @@ import { PageLayout, SafeArea, Section, SectionHeader } from "@/components/layou
 import { Accordion, Card, Divider, EmptyState, ErrorState, Pill, ProgressBar, Skeleton, StatGrid } from "@/components/ui";
 import { CoinIcon, NumberFormatter, Percentage, PriceFormatter, ScoreCircle } from "@/components/shared";
 import { TrendingSection, UnlockAlertCard } from "@/components/features/home";
-import { FundingRoundRow } from "@/components/features/project-detail";
+import { AiInsightCard, FundingRoundRow, ScoreRadarChart } from "@/components/features/project-detail";
 import { useProject } from "@/lib/api/hooks";
 import { useIsWatchlisted, useWatchlistActions, useIsFavorited, useFavoritesActions } from "@/store";
 import { cn, toSlug } from "@/lib/utils";
@@ -168,6 +168,8 @@ export default function ProjectDetailPage() {
                 trailing={overallCategory && project.grade !== null ? <Pill variant="neutral" className={scoreGradeColor[project.grade].text}>{project.grade}</Pill> : null}
               >
                 <div className="flex flex-col gap-3 pb-3">
+                  {/* Radar renders nothing below 3 axes — falls through to bars alone. */}
+                  <ScoreRadarChart categories={subCategories} />
                   {[...subCategories, ...(overallCategory ? [overallCategory] : [])].map((category) => (
                     <div key={category.key}>
                       <div className="flex items-center justify-between text-[15px] font-medium leading-5 text-foreground">
@@ -183,6 +185,28 @@ export default function ProjectDetailPage() {
                   ))}
                 </div>
               </Accordion>
+            </Section>
+          ) : null}
+
+          {/* AI Insight — rule-based synthesis of the scoring engine output
+              (see ai-insight-card.tsx); only rendered when a score exists so
+              the prose never has to hedge about missing data. */}
+          {isLoading || project.score !== null ? (
+            <Section className="px-4">
+              <AiInsightCard
+                isLoading={isLoading}
+                input={
+                  project.score !== null
+                    ? {
+                        name: project.name,
+                        score: project.score,
+                        scoreCategories,
+                        nextUnlock,
+                        changePercent24h: project.changePercent24h,
+                      }
+                    : null
+                }
+              />
             </Section>
           ) : null}
 

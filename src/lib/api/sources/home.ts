@@ -1,16 +1,22 @@
 // Data source for useHome(). Real sections from GET /api/home:
 //   weeklyPicks    — WeeklyPickDto[], mapped via mapWeeklyPickToCardProps
+//                    also mapped via mapWeeklyPickToTrendingItem → trendingProjects
+//   monthlyPicks   — MonthlyPickDto[], mapped via mapMonthlyPickToCardProps
+//   topFunds       — TopFundDto[], stored in HomeData.topFunds
+//                    also mapped via mapTopFundToTrendingItem → trendingFunds
+//   topGainers     — TopGainerDto[], mapped via mapTopGainerToCardProps
+//   recentlyAdded  — RecentlyAddedDto[], mapped via mapRecentlyAddedToCardProps
 //   newFunding     — NewFundingDto[], mapped via mapNewFundingToCardProps (→ recentFundraises)
-//   topFunds       — TopFundDto[], stored in HomeData.topFunds (no Home UI section yet)
 //   unlockAlerts   — UnlockAlertDto[], mapped via mapUnlockAlertToCardProps
+//   marketOverview — MarketOverviewDto | null; falls back to mockMarketOverview when null
 //
 // Synthetic signals absent from the DB (fundingQuality, unlockRiskLevel)
 // are left out — cards render "—" when absent, consistent with every
 // other nullable field in this codebase.
 //
-// Still mock (no backend DTO at all per DECISION_LOG.md R-10/R-11/R-12):
-//   marketOverview, fearGreed, trendingProjects/Funds/Platforms,
-//   topGainers, recentlyAdded
+// fearGreed — now real via GET /api/fear-greed (Alternative.me), cached 1h.
+//   Falls back to mockFearGreed if the request fails so a transient outage
+//   at Alternative.me doesn't break the home page.
 //
 // watchlistSummary was removed from HomeData: it is device-local state
 // owned by the Zustand watchlist store and must never come from an API
@@ -29,21 +35,15 @@ import type {
 import {
   mockFearGreed,
   mockMarketOverview,
-  mockRecentlyAdded,
-  mockTopGainers,
-  mockTrendingFunds,
-  mockTrendingPlatforms,
-  mockTrendingProjects,
 } from "@/components/features/home/mock-data";
 import { apiFetch } from "../client";
-import type { MonthlyPickDto, NewFundingDto, TopFundDto, UnlockAlertDto, WeeklyPickDto } from "../dto";
+import type { MarketOverviewDto, MonthlyPickDto, NewFundingDto, RecentlyAddedDto, TopFundDto, TopGainerDto, UnlockAlertDto, WeeklyPickDto } from "../dto";
 
 export interface HomeData {
   marketOverview: MarketOverviewCardProps;
   fearGreed: FearGreedCardProps;
   trendingProjects: TrendingItem[];
   trendingFunds: TrendingItem[];
-  trendingPlatforms: TrendingItem[];
   weeklyPicks: WeeklyPickCardProps[];
   monthlyPicks: WeeklyPickCardProps[];
   topGainers: TopGainerCardProps[];
@@ -65,8 +65,11 @@ interface RealHomeSections {
   weeklyPicks: WeeklyPickDto[];
   monthlyPicks: MonthlyPickDto[];
   topFunds: TopFundDto[];
+  topGainers: TopGainerDto[];
+  recentlyAdded: RecentlyAddedDto[];
   newFunding: NewFundingDto[];
   unlockAlerts: UnlockAlertDto[];
+  marketOverview: MarketOverviewDto | null;
 }
 
 /** `RecentFundraiseCardProps.announcedLabel` is explicitly "the caller's concern" per that component's own doc comment — this is presentation date-math, not invented business data. */
@@ -148,6 +151,77 @@ function mapMonthlyPickToCardProps(pick: MonthlyPickDto): WeeklyPickCardProps | 
   };
 }
 
+function mapWeeklyPickToTrendingItem(pick: WeeklyPickDto): TrendingItem {
+  return {
+    id: pick.slug,
+    name: pick.name,
+    logoUrl: pick.logoUrl,
+    metricLabel: pick.totalScore !== null ? `Score ${Math.round(pick.totalScore)}` : undefined,
+    changePercent: pick.priceChange24hPercent ?? undefined,
+  };
+}
+
+function mapTopGainerToCardProps(item: TopGainerDto, index: number): TopGainerCardProps {
+  return {
+    rank: index + 1,
+    name: item.name,
+    logoUrl: item.logoUrl,
+    changePercent: item.priceChange24hPercent,
+  };
+}
+
+function mapRecentlyAddedToCardProps(item: RecentlyAddedDto): RecentlyAddedCardProps {
+  return {
+    name: item.name,
+    logoUrl: item.logoUrl,
+    category: item.category,
+    addedLabel: formatRelativeDate(item.createdAt),
+  };
+}
+
+function mapMarketOverviewToCardProps(dto: MarketOverviewDto): MarketOverviewCardProps {
+  return {
+    assets: dto.assets.map((a) => ({
+      symbol: a.symbol,
+      logoUrl: a.logoUrl,
+      price: a.priceUsd,
+      changePercent24h: a.changePercent24h,
+    })),
+    totalMarketCap: dto.totalMarketCapUsd,
+    totalMarketCapChangePercent24h: dto.totalMarketCapChangePercent24h,
+  };
+}
+
+function mapTopFundToTrendingItem(fund: TopFundDto): TrendingItem {
+  return {
+    id: fund.slug,
+    name: fund.name,
+    logoUrl: fund.logoUrl,
+    metricLabel: `${fund.portfolioProjectCount} projects`,
+  };
+}
+
+/** Shape returned by GET /api/fear-greed. */
+interface FearGreedResponseData {
+  value: number;
+  classification: string;
+  updatedAt: number; // Unix seconds
+}
+
+function formatFearGreedLabel(unixSeconds: number): string {
+  const diffDays = Math.floor((Date.now() - unixSeconds * 1000) / (1000 * 60 * 60 * 24));
+  if (diffDays <= 0) return "Updated today";
+  if (diffDays === 1) return "Updated yesterday";
+  return `Updated ${diffDays}d ago`;
+}
+
+function mapFearGreedToCardProps(data: FearGreedResponseData): FearGreedCardProps {
+  return {
+    value: data.value,
+    asOfLabel: formatFearGreedLabel(data.updatedAt),
+  };
+}
+
 // Throws on failure — callers must handle errors. Previously caught and
 // returned null so the page could silently fall back to mock data, but
 // silently rendering stale mock data on a backend failure masks the outage
@@ -158,22 +232,24 @@ async function fetchRealHomeSections(signal?: AbortSignal): Promise<RealHomeSect
 }
 
 export async function fetchHomeData(signal?: AbortSignal): Promise<HomeData> {
-  const real = await fetchRealHomeSections(signal);
+  const [real, fearGreedRaw] = await Promise.all([
+    fetchRealHomeSections(signal),
+    apiFetch<FearGreedResponseData>("/api/fear-greed", { signal }).catch(() => null),
+  ]);
 
   return {
-    marketOverview: mockMarketOverview,
-    fearGreed: mockFearGreed,
-    trendingProjects: mockTrendingProjects,
-    trendingFunds: mockTrendingFunds,
-    trendingPlatforms: mockTrendingPlatforms,
+    marketOverview: real.marketOverview ? mapMarketOverviewToCardProps(real.marketOverview) : mockMarketOverview,
+    fearGreed: fearGreedRaw ? mapFearGreedToCardProps(fearGreedRaw) : mockFearGreed,
+    trendingProjects: real.weeklyPicks.map(mapWeeklyPickToTrendingItem),
+    trendingFunds: real.topFunds.map(mapTopFundToTrendingItem),
     weeklyPicks: real.weeklyPicks
       .map(mapWeeklyPickToCardProps)
       .filter((p): p is WeeklyPickCardProps => p !== null),
     monthlyPicks: real.monthlyPicks
       .map(mapMonthlyPickToCardProps)
       .filter((p): p is WeeklyPickCardProps => p !== null),
-    topGainers: mockTopGainers,
-    recentlyAdded: mockRecentlyAdded,
+    topGainers: real.topGainers.map(mapTopGainerToCardProps),
+    recentlyAdded: real.recentlyAdded.map(mapRecentlyAddedToCardProps),
     recentFundraises: real.newFunding.map(mapNewFundingToCardProps),
     unlockAlerts: real.unlockAlerts.map(mapUnlockAlertToCardProps),
     topFunds: real.topFunds,

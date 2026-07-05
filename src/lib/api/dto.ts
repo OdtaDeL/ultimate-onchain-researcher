@@ -4,17 +4,20 @@
 // shape their mock data against these types so swapping to a live fetch
 // later is a type-checked, no-surprises change.
 //
-// Not every UI section has a DTO here: Market Overview, Fear & Greed,
-// Top Gainers, Trending Platforms, Recently Added, and Watchlist Summary
-// have no backend support yet (see DECISION_LOG.md R-10/R-11/R-12). Those
-// sections keep using their existing component Prop types as the "data"
-// shape until a real DTO exists — see src/lib/api/sources/home.ts.
+// Not every UI section has a DTO here: Fear & Greed, Trending Platforms,
+// and Watchlist Summary have no backend support yet. Those sections keep
+// using their existing component Prop types as the "data" shape until a
+// real DTO exists — see src/lib/api/sources/home.ts.
 export type {
   Grade,
+  MarketOverviewAssetDto,
+  MarketOverviewDto,
   ScoreSummaryDto,
   WeeklyPickDto,
   MonthlyPickDto,
   TopFundDto,
+  TopGainerDto,
+  RecentlyAddedDto,
   NewFundingDto,
   UnlockAlertDto,
   ProjectOverviewDto,

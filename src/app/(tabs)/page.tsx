@@ -25,7 +25,6 @@ import { toSlug } from "@/lib/utils";
 const trendingTabs: { value: TrendingTab; label: string }[] = [
   { value: "projects", label: "Projects" },
   { value: "funds", label: "Funds" },
-  { value: "platforms", label: "Platforms" },
 ];
 
 // Skeleton placeholder counts — these cards fully replace their content
@@ -45,15 +44,13 @@ export default function HomePage() {
   const setTrendingTab = useSetTrendingTab();
   const { setMarketsTab } = useUiActions();
 
-  // Trending items don't carry navigation in the data layer (it's pure display data) — wire it
-  // here per tab, since "projects"/"funds" map to real detail screens but "platforms" doesn't yet.
+  // Trending items don't carry navigation in the data layer — wire it here per tab.
   const trendingItemsByTab: Record<TrendingTab, TrendingItem[]> = useMemo(
     () => ({
       projects: data.trendingProjects.map((item) => ({ ...item, onPress: () => router.push(`/project/${toSlug(item.name)}`) })),
       funds: data.trendingFunds.map((item) => ({ ...item, onPress: () => router.push(`/fund/${toSlug(item.name)}`) })),
-      platforms: data.trendingPlatforms.map((item) => ({ ...item })),
     }),
-    [router, data.trendingProjects, data.trendingFunds, data.trendingPlatforms],
+    [router, data.trendingProjects, data.trendingFunds],
   );
 
   const watchlistEntities = useWatchlistEntities();

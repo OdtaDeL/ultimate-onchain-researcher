@@ -1,20 +1,11 @@
 // Mock data for the Markets screen — display-shaped, matching each row
 // card's own Props type, never a backend DTO.
-// mockMarketsFilters is imported by markets/page.tsx (no filter API yet).
-// mockMarketsPlatforms is imported by markets.ts and search.ts (no platforms API yet).
+// mockMarketsPlatforms is imported by search.ts (no platforms API yet).
 // mockMarketsProjects and mockMarketsFunds are dead exports — replaced by
 // real API data in D-033 and D-034; nothing imports them.
-import type { FilterBarFilter } from "@/components/ui";
 import type { ProjectRowCardProps } from "./project-row-card";
 import type { FundRowCardProps } from "./fund-row-card";
 import type { PlatformRowCardProps } from "./platform-row-card";
-
-export const mockMarketsFilters: FilterBarFilter[] = [
-  { key: "category", label: "Category" },
-  { key: "chain", label: "Chain" },
-  { key: "stage", label: "Stage" },
-  { key: "score", label: "Score" },
-];
 
 export const mockMarketsProjects: Omit<ProjectRowCardProps, "isLoading" | "onPress">[] = [
   { name: "Celestia", score: 82, grade: "A", tvl: 412_000_000, marketCap: 1_900_000_000, changePercent24h: 8.2, fundingStage: "Series A" },

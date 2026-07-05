@@ -11,7 +11,6 @@ const EMPTY_HOME_DATA: HomeData = {
   fearGreed: { value: 0, asOfLabel: "" },
   trendingProjects: [],
   trendingFunds: [],
-  trendingPlatforms: [],
   weeklyPicks: [],
   monthlyPicks: [],
   topGainers: [],
@@ -27,11 +26,9 @@ const EMPTY_HOME_DATA: HomeData = {
  * TanStack Query's `useQuery()` (caching, retries, staleTime/gcTime — see
  * src/lib/query/defaults.ts) instead of a hand-rolled state machine.
  * `fetchHomeData` (src/lib/api/sources/home.ts) calls the real
- * `GET /api/home` for weeklyPicks, monthlyPicks, recentFundraises,
- * unlockAlerts, and topFunds. marketOverview,
- * fearGreed, trendingProjects/Funds/Platforms, topGainers, and
- * recentlyAdded have no backing DTO and remain mock — see that file's
- * header comment for the full per-field breakdown. This hook's shape never changes regardless.
+ * `GET /api/home` and `GET /api/fear-greed`. All data fields are real;
+ * see that file's header comment for the full per-field breakdown.
+ * This hook's shape never changes regardless.
  */
 export function useHome(): AsyncDataResult<HomeData> {
   const query = useQuery<HomeData, ApiClientError>({

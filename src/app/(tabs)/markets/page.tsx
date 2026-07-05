@@ -1,14 +1,15 @@
 "use client";
 
+import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { SafeArea, Section, StickyHeader } from "@/components/layout";
-import { EmptyState, ErrorState, FilterBar, PullToRefresh, SegmentedControl } from "@/components/ui";
+import { EmptyState, ErrorState, PullToRefresh, SegmentedControl } from "@/components/ui";
+import { LoadMoreButton } from "@/components/shared";
 import { typography, duration, easing } from "@/lib/theme";
-import { FundRowCard, PlatformRowCard, ProjectRowCard } from "@/components/features/markets";
-import { mockMarketsFilters } from "@/components/features/markets/mock-data";
-import { useMarkets } from "@/lib/api/hooks";
+import { FundRowCard, ProjectRowCard } from "@/components/features/markets";
+import { useMarkets, fetchMoreMarketProjects, type MarketProjectRow } from "@/lib/api/hooks";
 import { useMarketsTab, useUiActions, type MarketsTab } from "@/store";
 import { toSlug } from "@/lib/utils";
 
@@ -17,7 +18,6 @@ const SKELETON_ROW_COUNT = 6;
 const marketsTabs: { value: MarketsTab; label: string }[] = [
   { value: "projects", label: "Projects" },
   { value: "funds", label: "Funds" },
-  { value: "platforms", label: "Platforms" },
 ];
 
 interface MarketsHeaderProps {
@@ -26,16 +26,15 @@ interface MarketsHeaderProps {
 }
 
 /**
- * Sticky Top App Bar for Markets: title + search entry, the tab switcher,
- * and the filter row. Rendered as the first element of the page's own
- * content (no `PageLayout` of its own anymore — that now lives once in
- * the `(tabs)` route group's shared layout) so it sticks within that
- * shared scroll container, replicating PageLayout's own header recipe
- * (`sticky top-0` + glass + header z-index) exactly.
+ * Sticky Top App Bar for Markets: title + search entry and the tab switcher.
+ * Rendered as the first element of the page's own content (no `PageLayout`
+ * of its own anymore — that now lives once in the `(tabs)` route group's
+ * shared layout) so it sticks within that shared scroll container,
+ * replicating PageLayout's own header recipe (`sticky top-0` + glass +
+ * header z-index) exactly.
  */
 function MarketsHeader({ activeTab, onTabChange }: MarketsHeaderProps) {
   const router = useRouter();
-  const { setActiveFilterKey } = useUiActions();
 
   return (
     <StickyHeader>
@@ -50,8 +49,6 @@ function MarketsHeader({ activeTab, onTabChange }: MarketsHeaderProps) {
         <div className="px-4 pb-3">
           <SegmentedControl options={marketsTabs} value={activeTab} onChange={onTabChange} />
         </div>
-
-        <FilterBar filters={mockMarketsFilters} onFilterPress={setActiveFilterKey} className="pb-3" />
       </SafeArea>
     </StickyHeader>
   );
@@ -62,6 +59,35 @@ export default function MarketsPage() {
   const { data, loading, error, refresh } = useMarkets();
   const activeTab = useMarketsTab();
   const { setMarketsTab } = useUiActions();
+
+  // Accumulated extra pages for the Projects tab.
+  const [extraProjects, setExtraProjects] = useState<MarketProjectRow[]>([]);
+  const [nextProjectsPage, setNextProjectsPage] = useState<number | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+
+  // Reset accumulated items whenever TanStack Query delivers fresh base data
+  // (initial load or pull-to-refresh). `data` reference changes only when a
+  // new fetch completes, so this effect runs at the right moments.
+  useEffect(() => {
+    setExtraProjects([]);
+    setNextProjectsPage(data.projectsNextPage);
+  }, [data]);
+
+  const loadMoreProjects = useCallback(async () => {
+    if (!nextProjectsPage || isLoadingMore) return;
+    setIsLoadingMore(true);
+    try {
+      const { rows, hasNextPage } = await fetchMoreMarketProjects(nextProjectsPage);
+      setExtraProjects((prev) => [...prev, ...rows]);
+      setNextProjectsPage(hasNextPage ? nextProjectsPage + 1 : null);
+    } catch {
+      // Swallow — the button remains visible so the user can retry.
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, [nextProjectsPage, isLoadingMore]);
+
+  const allProjects = [...data.projects, ...extraProjects];
 
   return (
     <>
@@ -88,30 +114,23 @@ export default function MarketsPage() {
                 Array.from({ length: SKELETON_ROW_COUNT }).map((_, i) =>
                   activeTab === "projects" ? (
                     <ProjectRowCard key={i} name="" score={0} grade="C" tvl={0} marketCap={0} changePercent24h={0} isLoading />
-                  ) : activeTab === "funds" ? (
-                    <FundRowCard key={i} name="" portfolioProjectCount={0} recentInvestmentCount={0} isLoading />
                   ) : (
-                    <PlatformRowCard key={i} protocol="" tvl={0} revenue={0} fees={0} isLoading />
+                    <FundRowCard key={i} name="" portfolioProjectCount={0} recentInvestmentCount={0} isLoading />
                   ),
                 )
               ) : activeTab === "projects" ? (
-                data.projects.length === 0 ? (
+                allProjects.length === 0 ? (
                   <EmptyState variant="section" description="No ranked projects this week." />
                 ) : (
-                  data.projects.map((project) => <ProjectRowCard key={project.slug ?? project.name} {...project} onPress={() => router.push(`/project/${project.slug ?? toSlug(project.name)}`)} />)
+                  <>
+                    {allProjects.map((project) => <ProjectRowCard key={project.slug ?? project.name} {...project} onPress={() => router.push(`/project/${project.slug ?? toSlug(project.name)}`)} />)}
+                    <LoadMoreButton hasMore={nextProjectsPage !== null} isLoading={isLoadingMore} onLoadMore={loadMoreProjects} />
+                  </>
                 )
-              ) : activeTab === "funds" ? (
-                data.funds.length === 0 ? (
-                  <EmptyState variant="section" description="No funds match these filters." />
-                ) : (
-                  data.funds.map((fund) => <FundRowCard key={fund.slug ?? fund.name} {...fund} onPress={() => router.push(`/fund/${fund.slug ?? toSlug(fund.name)}`)} />)
-                )
-              ) : data.platforms.length === 0 ? (
-                <EmptyState variant="section" description="No platforms match these filters." />
+              ) : data.funds.length === 0 ? (
+                <EmptyState variant="section" description="No funds match these filters." />
               ) : (
-                data.platforms.map((platform) => (
-                  <PlatformRowCard key={platform.protocol} {...platform} />
-                ))
+                data.funds.map((fund) => <FundRowCard key={fund.slug ?? fund.name} {...fund} onPress={() => router.push(`/fund/${fund.slug ?? toSlug(fund.name)}`)} />)
               )}
             </motion.div>
           </AnimatePresence>

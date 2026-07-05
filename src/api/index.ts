@@ -17,6 +17,8 @@
 // inside it.
 
 export { handleGetHome } from "./home";
+export { handleGetFearGreed } from "./fear-greed";
+export { handleCronSync } from "./cron";
 export { handleGetProject } from "./project";
 export { handleGetFund } from "./fund";
 export { handleGetSearch } from "./search";
@@ -33,6 +35,7 @@ export type { ApiSuccessResponse, ApiErrorBody, ApiResponseBody, PaginationMeta,
  * no router dependency lives in this folder.
  *
  *   GET /api/home             -> handleGetHome(req, supabase)
+ *   GET /api/fear-greed       -> handleGetFearGreed(req)
  *   GET /api/projects/:slug   -> handleGetProject(req, supabase, { slug })
  *   GET /api/funds/:slug      -> handleGetFund(req, supabase, { slug })
  *   GET /api/search           -> handleGetSearch(req, supabase)

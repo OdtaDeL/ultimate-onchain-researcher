@@ -96,6 +96,38 @@ export interface TopFundDto {
   rank: number;
 }
 
+export interface TopGainerDto {
+  projectId: string;
+  slug: string;
+  name: string;
+  logoUrl: string | null;
+  /** From project_metrics.price_change_24h — always non-null (rows without a value are excluded by getTopGainers). */
+  priceChange24hPercent: number;
+}
+
+export interface MarketOverviewAssetDto {
+  symbol: string;
+  logoUrl: string | null;
+  priceUsd: number;
+  changePercent24h: number;
+}
+
+export interface MarketOverviewDto {
+  assets: MarketOverviewAssetDto[];
+  totalMarketCapUsd: number;
+  totalMarketCapChangePercent24h: number;
+}
+
+export interface RecentlyAddedDto {
+  projectId: string;
+  slug: string;
+  name: string;
+  logoUrl: string | null;
+  category: string | null;
+  /** ISO-8601 timestamp from projects.created_at. */
+  createdAt: string;
+}
+
 export interface NewFundingDto {
   fundingRoundId: string;
   projectId: string;

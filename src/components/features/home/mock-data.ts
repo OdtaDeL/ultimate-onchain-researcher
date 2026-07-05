@@ -2,8 +2,7 @@
 // component's own prop types (not any backend DTO).
 //
 // Live exports (imported by src/lib/api/sources/home.ts; no backend DTO yet):
-//   mockMarketOverview, mockFearGreed, mockTrendingProjects, mockTrendingFunds,
-//   mockTrendingPlatforms, mockTopGainers, mockRecentlyAdded
+//   mockMarketOverview, mockFearGreed
 //
 // Dead exports (nothing imports them; replaced by real API data):
 //   mockWeeklyPicks    — replaced by /api/home weeklyPicks in D-029
@@ -45,12 +44,6 @@ export const mockTrendingFunds: TrendingItem[] = [
   { id: "a16z", name: "a16z Crypto", metricLabel: "12 projects" },
   { id: "paradigm", name: "Paradigm", metricLabel: "8 projects" },
   { id: "pantera", name: "Pantera Capital", metricLabel: "21 projects" },
-];
-
-export const mockTrendingPlatforms: TrendingItem[] = [
-  { id: "ethereum", name: "Ethereum" },
-  { id: "solana", name: "Solana" },
-  { id: "base", name: "Base" },
 ];
 
 export const mockWeeklyPicks: WeeklyPickCardProps[] = [

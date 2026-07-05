@@ -1,4 +1,4 @@
-import type { ApiResponseBody } from "./types";
+import type { ApiResponseBody, ApiSuccessResponse, PaginationMeta } from "./types";
 import { ApiClientError } from "./errors";
 
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -19,19 +19,15 @@ function buildUrl(path: string, searchParams?: ApiRequestOptions["searchParams"]
 }
 
 /**
- * Typed fetch against this app's own `/api/*` routes. Enforces a 10-second
- * hard timeout on every request and forwards the caller's AbortSignal (React
- * Query's cancellation signal) so stale requests from unmounted components or
- * superseded queries are aborted promptly. Parses the
- * `{success:true,data,pagination?}` | `{success:false,error}` envelope from
- * src/api/response.ts / src/api/errors.ts.
+ * Shared fetch implementation. Enforces a 10-second hard timeout, forwards
+ * the caller's AbortSignal, attaches the Telegram initData header, and
+ * parses the `{success:true,data,pagination?}` | `{success:false,error}`
+ * envelope. Returns the full ApiSuccessResponse (including pagination) so
+ * callers can choose what to surface.
  */
-export async function apiFetch<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+async function performFetch<T>(path: string, options: ApiRequestOptions): Promise<ApiSuccessResponse<T>> {
   const url = buildUrl(path, options.searchParams);
 
-  // Create a single controller that aborts on whichever fires first:
-  // the hard 10-second timeout, or the caller's own signal (React Query
-  // cancellation on component unmount / query key change).
   const timeoutController = new AbortController();
   const timeoutId = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
   if (options.signal) {
@@ -42,9 +38,6 @@ export async function apiFetch<T>(path: string, options: ApiRequestOptions = {})
     );
   }
 
-  // Attach Telegram initData for server-side HMAC verification (proxy.ts).
-  // Empty string when running outside Telegram (dev browser, tests) — header
-  // is omitted in that case so proxy.ts can distinguish absent vs invalid.
   const headers: HeadersInit = {};
   if (typeof window !== "undefined") {
     const initData = window.Telegram?.WebApp?.initData;
@@ -57,9 +50,6 @@ export async function apiFetch<T>(path: string, options: ApiRequestOptions = {})
   } catch (error) {
     clearTimeout(timeoutId);
     if (error instanceof DOMException && error.name === "AbortError") {
-      // React Query cancelled the query (component unmounted, key changed) —
-      // rethrow as-is so TanStack Query silences it rather than marking
-      // the query as failed.
       if (options.signal?.aborted) throw error;
       throw new ApiClientError("TIMEOUT", "Request timed out.");
     }
@@ -78,5 +68,28 @@ export async function apiFetch<T>(path: string, options: ApiRequestOptions = {})
     throw new ApiClientError(body.error.code, body.error.message, response.status);
   }
 
+  return body;
+}
+
+/**
+ * Typed fetch against this app's own `/api/*` routes. Returns only `data` —
+ * use `apiFetchPaginated` when you also need pagination metadata.
+ */
+export async function apiFetch<T>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  const body = await performFetch<T>(path, options);
   return body.data;
+}
+
+/**
+ * Like `apiFetch` but also returns `pagination` from the response envelope
+ * (src/api/types.ts's `ApiSuccessResponse.pagination`). Use for endpoints
+ * that paginate their results so callers can check `hasNextPage` and
+ * conditionally offer a "Load more" control.
+ */
+export async function apiFetchPaginated<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<{ data: T; pagination?: PaginationMeta }> {
+  const body = await performFetch<T>(path, options);
+  return { data: body.data, pagination: body.pagination };
 }

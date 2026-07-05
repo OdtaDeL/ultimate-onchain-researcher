@@ -28,6 +28,8 @@ interface AppEnv {
   readonly SUPABASE_SERVICE_ROLE_KEY: string;
   /** Telegram Bot Token — optional. When present, proxy.ts verifies every /api/* request's Telegram initData HMAC-SHA256 signature in production. Obtain from @BotFather. Without this, initData verification is skipped (safe for development). */
   readonly TELEGRAM_BOT_TOKEN: string | undefined;
+  /** Cron secret — optional. When present, GET /api/cron/sync requires an Authorization: Bearer <CRON_SECRET> header, preventing unauthorized triggers. Vercel sets this header automatically on cron invocations when the variable is configured. Without this, the cron endpoint is unprotected (safe for development). */
+  readonly CRON_SECRET: string | undefined;
 }
 
 const cache = new Map<keyof AppEnv, string>();
@@ -59,6 +61,9 @@ export const env: AppEnv = {
   },
   get TELEGRAM_BOT_TOKEN() {
     return process.env.TELEGRAM_BOT_TOKEN || undefined;
+  },
+  get CRON_SECRET() {
+    return process.env.CRON_SECRET || undefined;
   },
 };
 

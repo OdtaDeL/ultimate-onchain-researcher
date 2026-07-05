@@ -4,9 +4,20 @@ import { useQuery } from "@tanstack/react-query";
 import { queryKeys } from "@/lib/query";
 import { mapQueryResult, type AsyncDataResult } from "../map-query-result";
 import type { ApiClientError } from "../errors";
-import { fetchSearchData, type SearchData } from "../sources/search";
+import { fetchSearchData, fetchMoreSearchFunds, fetchMoreSearchProjects, type SearchData } from "../sources/search";
 
-const EMPTY_SEARCH_DATA: SearchData = { query: "", projects: [], funds: [], platforms: [], trendingSearches: [] };
+export type { SearchData, SearchProjectRow, SearchFundRow } from "../sources/search";
+export { fetchMoreSearchProjects, fetchMoreSearchFunds };
+
+const EMPTY_SEARCH_DATA: SearchData = {
+  query: "",
+  projects: [],
+  funds: [],
+  platforms: [],
+  trendingSearches: [],
+  projectsNextPage: null,
+  fundsNextPage: null,
+};
 
 /**
  * UI boundary for the Search screen. Takes the live query string so the
