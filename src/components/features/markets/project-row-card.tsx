@@ -12,9 +12,10 @@ export interface ProjectRowCardProps {
   logoUrl?: string | null;
   score: number;
   grade: ScoreGrade;
-  tvl: number;
-  marketCap: number;
-  changePercent24h: number;
+  /** Null when no project_metrics row provides this field yet (e.g. not a TVL-bearing protocol, or DefiLlama/CoinGecko hasn't synced it) — renders "—". */
+  tvl: number | null;
+  marketCap: number | null;
+  changePercent24h: number | null;
   /** Pre-formatted by the caller, e.g. "Seed", "Series A", "Public" — same convention as WeeklyPickCard's unlockRiskLabel. */
   fundingStage?: string | null;
   onPress?: () => void;
@@ -58,15 +59,15 @@ export function ProjectRowCard({ name, logoUrl, score, grade, tvl, marketCap, ch
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
               <span className="line-clamp-1 text-[15px] font-medium leading-5 text-foreground">{name}</span>
-              <Percentage value={changePercent24h} className="text-[13px]" />
+              {changePercent24h !== null ? (
+                <Percentage value={changePercent24h} className="text-[13px]" />
+              ) : (
+                <span className="text-[13px] text-muted-foreground">—</span>
+              )}
             </div>
             <div className="mt-1 flex items-center gap-2 text-[13px] leading-[18px] tracking-[0.1px] text-muted-foreground">
-              <span>
-                TVL $<NumberFormatter value={tvl} />
-              </span>
-              <span>
-                MCap $<NumberFormatter value={marketCap} />
-              </span>
+              <span>TVL {tvl !== null ? <>$<NumberFormatter value={tvl} /></> : "—"}</span>
+              <span>MCap {marketCap !== null ? <>$<NumberFormatter value={marketCap} /></> : "—"}</span>
               {fundingStage ? <Pill variant="neutral">{fundingStage}</Pill> : null}
             </div>
           </div>

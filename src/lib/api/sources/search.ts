@@ -58,21 +58,14 @@ function matches(name: string, query: string): boolean {
 const SEARCH_PAGE_SIZE = 20;
 
 /**
- * Maps a project search result to a Projects-row, or `null` if any field
- * the card requires as non-optional (score/grade/tvl/marketCap/24h
- * change) isn't available for this project yet — same honest-drop
- * convention as src/lib/api/sources/markets.ts's mapWeeklyPickToProjectRow.
+ * Maps a project search result to a Projects-row, or `null` only when the
+ * project isn't scored yet (score/grade missing) — same convention as
+ * src/lib/api/sources/markets.ts's mapWeeklyPickToProjectRow. TVL/market
+ * cap/24h change are passed through as-is (often null); the card renders
+ * "—" for each rather than dropping an otherwise-matching search result.
  */
 function mapSearchResultToProjectRow(result: ProjectSearchResultDto): SearchProjectRow | null {
-  if (
-    result.totalScore === null ||
-    result.grade === null ||
-    result.tvlUsd === null ||
-    result.marketCapUsd === null ||
-    result.priceChange24hPercent === null
-  ) {
-    return null;
-  }
+  if (result.totalScore === null || result.grade === null) return null;
   return {
     slug: result.slug,
     name: result.name,

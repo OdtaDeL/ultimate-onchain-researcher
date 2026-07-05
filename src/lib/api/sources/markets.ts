@@ -33,23 +33,15 @@ export interface MarketsData {
 const PROJECTS_PAGE_SIZE = 20;
 
 /**
- * Maps a ranked project to a Projects-tab row, or `null` if any field the
- * card requires as non-optional (score/grade/tvl/marketCap/24h change)
- * isn't available for this project yet — e.g. it's been scored but has no
- * project_metrics row. Dropping the row is the honest choice: there's no
- * "unknown" representation in ProjectRowCardProps, so showing 0 instead
- * would fabricate a value the backend never reported.
+ * Maps a ranked project to a Projects-tab row, or `null` only when the
+ * project's core identity — score/grade — isn't available yet (unscored).
+ * TVL/market cap/24h change are frequently null (not every project is a
+ * TVL-bearing protocol, or DefiLlama/CoinGecko hasn't synced it yet) and
+ * are passed through as-is; ProjectRowCardProps renders "—" for each,
+ * rather than dropping an otherwise-valid, scored project from the list.
  */
 function mapWeeklyPickToProjectRow(pick: WeeklyPickDto): MarketProjectRow | null {
-  if (
-    pick.totalScore === null ||
-    pick.grade === null ||
-    pick.tvlUsd === null ||
-    pick.marketCapUsd === null ||
-    pick.priceChange24hPercent === null
-  ) {
-    return null;
-  }
+  if (pick.totalScore === null || pick.grade === null) return null;
   return {
     slug: pick.slug,
     name: pick.name,
