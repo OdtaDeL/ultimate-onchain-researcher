@@ -36,17 +36,33 @@ jobs:
 
       - run: npm ci
 
-      # ChainBroker: projects, funds, funding rounds, unlocks.
+      # ChainBroker: projects, funds, funding rounds, unlocks. ChainBroker
+      # is an unofficial, Cloudflare-fronted API with no SLA (see
+      # src/providers/chainbroker/SOURCE.md "Stability posture") — it can
+      # soft-block a whole IP range, including shared CI runner IPs. A
+      # failure here must not skip the steps below (mirrors src/api/cron.ts's
+      # runPhase() isolation, which this workflow otherwise has no
+      # equivalent for). Deliberately NOT using `continue-on-error` here —
+      # that would make the *job* report success despite this step failing,
+      # hiding the failure. `if: always()` on the steps below is the
+      # correct mechanism: it makes them run regardless of this step's
+      # outcome, while this step's own failure still correctly fails the
+      # overall job/run (so it's still visible in the Actions tab and any
+      # notifications).
       - name: Sync ChainBroker
         run: npm run sync:all
 
       # CoinGecko -> DefiLlama -> CoinPaprika -> DexScreener, in that order
       # (CoinPaprika/DexScreener are gap-fillers and must run after
       # CoinGecko — see src/ingestion/metrics/syncMetrics.ts's doc
-      # comments on why order matters here).
+      # comments on why order matters here). `if: always()` — must still
+      # run even if the ChainBroker step above failed.
       - name: Sync market metrics
+        if: always()
         run: npm run sync:metrics -- --provider=all
 
       # Must run last — depends on the funding/unlock/metrics data above.
+      # `if: always()` for the same reason as the metrics step.
       - name: Recompute scores
+        if: always()
         run: npm run sync:scores -- --all
