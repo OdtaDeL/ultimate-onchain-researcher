@@ -83,15 +83,33 @@ The `.env` file is gitignored — never commit it.
 
 ---
 
-## Running Ingestion Locally
+## Scheduled Ingestion
 
-The ingestion CLI runs outside Vercel (it is a Node.js script, not an HTTP handler). Run it with
-the same `.env` file:
+`.github/workflows/sync.yml` runs **market metrics + scoring** daily at 02:00 UTC on a GitHub
+Actions runner — not Vercel Cron. Vercel's Hobby plan hard-caps every serverless function at
+10 seconds regardless of `maxDuration`, and this pipeline takes tens of minutes, so it could
+never complete there. Requires two repository secrets (Settings → Secrets and variables →
+Actions): `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+
+**ChainBroker sync (projects/funds/funding-rounds/unlocks) is intentionally NOT scheduled.**
+Confirmed 2026-07-06: ChainBroker's Cloudflare protection consistently blocks every request from
+the GitHub Actions runner IP range (all 4 endpoints, full retry exhaustion), while the same
+requests succeed from a residential IP. This is a per-environment IP block, not a transient
+outage — retrying from GitHub Actions won't help. Run it manually instead, from a machine that
+can actually reach `api.chainbroker.io`:
 
 ```bash
 npm run sync:all        # fetch projects, funds, funding rounds, token unlocks
-npm run sync:metrics    # fetch market data (price, TVL, etc.) from CoinGecko/DefiLlama
-npm run sync:scores     # run scoring engine; refresh materialized views
 ```
 
-Scheduled ingestion (Vercel Cron) is planned for Phase 5 — see ROADMAP.md.
+The scheduled workflow instead maximizes coverage on whatever projects already exist in the DB,
+using sources confirmed to work from GitHub Actions:
+
+```bash
+npm run sync:metrics -- --provider=all   # CoinGecko -> DefiLlama -> CoinPaprika -> DexScreener
+npm run sync:scores -- --all             # recompute scores from the refreshed metrics
+```
+
+`src/app/api/cron/sync/route.ts` still exists as a manual/on-demand trigger (e.g. if this
+project ever moves to a Vercel Pro plan, where `maxDuration` would actually take effect), but
+is not wired to any cron schedule in `vercel.json`.

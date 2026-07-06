@@ -1,12 +1,26 @@
 name: Daily Data Sync
 
-# Runs the full ingestion + scoring pipeline on GitHub's runner instead of
+# Runs the metrics + scoring pipeline on GitHub's runner instead of
 # Vercel's serverless functions. Necessary, not a style choice: Vercel's
 # Hobby (free) plan hard-caps every serverless function at 10 seconds
 # regardless of the `maxDuration` declared in src/app/api/cron/sync/route.ts
-# — the full pipeline (ChainBroker crawl + market metrics + scoring 2,000+
-# projects) takes tens of minutes, so it could never complete there. GitHub
-# Actions has no such ceiling (up to 6h per job on the free tier).
+# — this pipeline (market metrics across ~2,000+ projects + rescoring)
+# takes tens of minutes, so it could never complete there. GitHub Actions
+# has no such ceiling (up to 6h per job on the free tier).
+#
+# ChainBroker sync (projects/funds/funding-rounds/unlocks) is
+# DELIBERATELY NOT part of this workflow — confirmed 2026-07-06 that
+# ChainBroker's Cloudflare protection consistently blocks every request
+# from the GitHub Actions runner IP range (all 4 endpoints failed, full
+# retry exhaustion, every attempt), while the same requests succeed fine
+# from a residential IP. This is a per-run-environment IP block, not a
+# transient outage — retrying from GitHub Actions won't help. ChainBroker
+# now only updates the project/funding/unlock catalog via a manual local
+# run (`npm run sync:all`, from a machine that can actually reach it);
+# this pipeline instead maximizes coverage on whatever projects already
+# exist in the DB using sources that DO work from GitHub Actions
+# (CoinGecko, DefiLlama, CoinPaprika, DexScreener — none of which are
+# Cloudflare-fronted or IP-range-blocked here).
 #
 # Runs the exact same CLI entrypoints a developer would run locally
 # (npm run sync:*) — no duplicate ingestion logic lives in this workflow.
@@ -36,33 +50,13 @@ jobs:
 
       - run: npm ci
 
-      # ChainBroker: projects, funds, funding rounds, unlocks. ChainBroker
-      # is an unofficial, Cloudflare-fronted API with no SLA (see
-      # src/providers/chainbroker/SOURCE.md "Stability posture") — it can
-      # soft-block a whole IP range, including shared CI runner IPs. A
-      # failure here must not skip the steps below (mirrors src/api/cron.ts's
-      # runPhase() isolation, which this workflow otherwise has no
-      # equivalent for). Deliberately NOT using `continue-on-error` here —
-      # that would make the *job* report success despite this step failing,
-      # hiding the failure. `if: always()` on the steps below is the
-      # correct mechanism: it makes them run regardless of this step's
-      # outcome, while this step's own failure still correctly fails the
-      # overall job/run (so it's still visible in the Actions tab and any
-      # notifications).
-      - name: Sync ChainBroker
-        run: npm run sync:all
-
       # CoinGecko -> DefiLlama -> CoinPaprika -> DexScreener, in that order
       # (CoinPaprika/DexScreener are gap-fillers and must run after
       # CoinGecko — see src/ingestion/metrics/syncMetrics.ts's doc
-      # comments on why order matters here). `if: always()` — must still
-      # run even if the ChainBroker step above failed.
+      # comments on why order matters here).
       - name: Sync market metrics
-        if: always()
         run: npm run sync:metrics -- --provider=all
 
-      # Must run last — depends on the funding/unlock/metrics data above.
-      # `if: always()` for the same reason as the metrics step.
+      # Must run last — depends on the metrics data above.
       - name: Recompute scores
-        if: always()
         run: npm run sync:scores -- --all
