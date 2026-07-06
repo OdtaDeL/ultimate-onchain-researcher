@@ -79,6 +79,37 @@ function classifyResolutionTier(result: ResolutionResult): keyof ResolutionBreak
   }
 }
 
+/**
+ * Counts how many times each symbol/name (case-insensitive) appears across
+ * this batch's identities. Ticker collisions are the rule in crypto, not
+ * the exception — confirmed live 2026-07-06: DexScreener returned 24
+ * *different, unrelated* tokens all sharing the exact symbol "HYPER"
+ * (Bitcoin Hyper, Hyperpigmentation, Hyper Ape AI, the real Hyperlane,
+ * ...). If a provider's own batch contains 2+ records sharing a
+ * symbol/name, that string cannot safely identify a single real-world
+ * asset — whichever one happens to resolve first would silently claim a
+ * project, and a later one sharing the same string would then silently
+ * overwrite it with a *different* coin's data, since the alias table
+ * matches on (provider, symbol) alone. See `ingest`'s use of this below.
+ */
+function countBatchOccurrences<TColumns extends MetricsColumns>(
+  drafts: MetricsDraft<TColumns>[],
+): { symbolCounts: Map<string, number>; nameCounts: Map<string, number> } {
+  const symbolCounts = new Map<string, number>();
+  const nameCounts = new Map<string, number>();
+  for (const draft of drafts) {
+    if (draft.identity.symbol) {
+      const key = draft.identity.symbol.toUpperCase();
+      symbolCounts.set(key, (symbolCounts.get(key) ?? 0) + 1);
+    }
+    if (draft.identity.name) {
+      const key = draft.identity.name.toUpperCase();
+      nameCounts.set(key, (nameCounts.get(key) ?? 0) + 1);
+    }
+  }
+  return { symbolCounts, nameCounts };
+}
+
 export class MetricsIngestionService {
   private readonly upsertService: MetricsUpsertService;
 
@@ -109,9 +140,22 @@ export class MetricsIngestionService {
       ? await loadResolutionContext(this.supabase, provider)
       : null;
 
+    const { symbolCounts, nameCounts } = countBatchOccurrences(drafts);
+
     for (const draft of drafts) {
+      // Strip any symbol/name this batch can't vouch for as unique (see
+      // countBatchOccurrences) — resolution falls through to a safer tier
+      // (or unresolved) instead of trusting an ambiguous ticker/name.
+      const identity = { ...draft.identity };
+      if (identity.symbol && (symbolCounts.get(identity.symbol.toUpperCase()) ?? 0) > 1) {
+        identity.symbol = null;
+      }
+      if (identity.name && (nameCounts.get(identity.name.toUpperCase()) ?? 0) > 1) {
+        identity.name = null;
+      }
+
       const result = context
-        ? await resolveProjectIdentityWithContext(this.supabase, draft.identity, context)
+        ? await resolveProjectIdentityWithContext(this.supabase, identity, context)
         : { status: "unresolved" as const, projectId: null, tier: null, confidence: null };
 
       if (result.status !== "resolved" || result.projectId === null) {

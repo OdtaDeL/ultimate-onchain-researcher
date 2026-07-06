@@ -78,6 +78,15 @@ function buildReport(
  * paginated. Each page is resolved and upserted independently — a
  * failure resolving/upserting one page's records doesn't lose progress
  * already made on earlier pages.
+ *
+ * Gap-fill only (flipped 2026-07-06, was previously the primary/first
+ * source): CoinGecko's 16,000+-coin catalog has the highest chance of any
+ * provider here of containing 2+ *different* coins sharing one project's
+ * ticker in the same batch — `ingestion-service.ts`'s batch-dedup guard
+ * now blanks those before resolving, but running CoinGecko last, after
+ * CoinPaprika/DexScreener have already claimed the columns they could,
+ * means fewer projects are even exposed to that risk in the first place.
+ * Run this AFTER `syncCoinPaprikaMetrics` and the DexScreener gap-fill.
  */
 export async function syncCoinGeckoMetrics(
   supabase: SupabaseClient<Database>,
@@ -112,7 +121,7 @@ export async function syncCoinGeckoMetrics(
     const params: CoinsMarketsParams = { page, perPage };
     const result = await provider.listCoinsMarkets(params);
     const drafts = result.items.map(mapCoinGeckoMetrics);
-    const pageResult = await ingestion.ingest(drafts);
+    const pageResult = await ingestion.ingest(drafts, true);
 
     totals.totalProviderRecords += pageResult.totalProviderRecords;
     totals.matchedProjects += pageResult.matchedProjects;
@@ -196,11 +205,13 @@ export async function syncDefiLlamaProtocolFeesAndRevenue(
 }
 
 /**
- * Gap-fill only — see mapper.ts's `mapCoinPaprikaMetrics` doc comment and
- * upsert-service.ts's `fillNullsOnly`. Run this AFTER `syncCoinGeckoMetrics`
- * in any given sync so it only ever fills what CoinGecko left null; running
- * it first would mean CoinGecko's later, better-covered write simply
- * overwrites CoinPaprika's value anyway (harmless, but wasteful ordering).
+ * Primary market-data source (flipped 2026-07-06, was previously a
+ * CoinGecko-only gap-filler): run this FIRST, before CoinGecko. Not
+ * `fillNullsOnly` — writes normally (diff-and-update), same as CoinGecko
+ * used to. CoinPaprika's ~2,000-coin catalog is far smaller than
+ * CoinGecko's 16,000+, so it's structurally less likely to contain
+ * colliding tickers within one batch — see ingestion-service.ts's
+ * batch-dedup guard, which still protects this call regardless.
  */
 export async function syncCoinPaprikaMetrics(
   supabase: SupabaseClient<Database>,
@@ -211,18 +222,23 @@ export async function syncCoinPaprikaMetrics(
 
   const tickers = await provider.listTickers();
   const drafts = tickers.map(mapCoinPaprikaMetrics);
-  const result = await ingestion.ingest(drafts, true);
+  const result = await ingestion.ingest(drafts, false);
 
   return buildReport("coinpaprika", startedAt, new Date(), result);
 }
 
 /**
- * Gap-fill only, third and narrowest source — run this LAST, after both
- * `syncCoinGeckoMetrics` and `syncCoinPaprikaMetrics`, so `getProjectsMissingMarketData`
- * reflects whatever gap those two left behind rather than the original,
- * larger gap. Unlike the bulk providers above, DexScreener has no
- * "list everything" endpoint — this queries once per gap project with a
- * ChainBroker ticker (rate-limited via the provider's own 1 req/sec
+ * Second primary source (flipped 2026-07-06) — run this AFTER
+ * `syncCoinPaprikaMetrics` and BEFORE `syncCoinGeckoMetrics`, so
+ * `getProjectsMissingMarketData` reflects the gap CoinPaprika left
+ * (not the original, larger gap) and CoinGecko's fill-only pass afterward
+ * only ever touches what's still missing after both of these. Still
+ * `fillNullsOnly` relative to CoinPaprika (never overwrites what it just
+ * wrote) even though it's conceptually "primary" alongside it — the two
+ * don't compete for the same project since this only queries projects
+ * CoinPaprika left null. Unlike the bulk providers above, DexScreener has
+ * no "list everything" endpoint — this queries once per gap project with
+ * a ChainBroker ticker (rate-limited via the provider's own 1 req/sec
  * limiter — see providers/dexscreener/SOURCE.md), accepting a candidate
  * only on an exact, unambiguous ticker-symbol match (see
  * providers/dexscreener/SOURCE.md "Matching strategy").
@@ -235,11 +251,28 @@ export async function syncDexScreenerGapFill(
   const ingestion = new MetricsIngestionService(supabase);
 
   const gapProjects = await getProjectsMissingMarketData(supabase);
-  const withTicker = gapProjects.filter((p) => p.ticker !== null && p.ticker !== "");
+  // DexScreener's search rejects very short queries with a 400 (confirmed
+  // live: a 1-character ticker "U" failed this way) — excluded here rather
+  // than only in the per-project catch below, since a 400 isn't in
+  // DexScreenerClient's retryOnStatusCodes (it's correctly not treated as
+  // transient) and would otherwise burn 4 retry attempts for a query that
+  // can never succeed.
+  const MIN_QUERY_LENGTH = 2;
+  const withTicker = gapProjects.filter(
+    (p) => p.ticker !== null && p.ticker.length >= MIN_QUERY_LENGTH,
+  );
 
   const drafts: MetricsDraft<DexScreenerMetricsColumns>[] = [];
   for (const project of withTicker) {
-    const candidates = await provider.searchTokens(project.ticker as string);
+    let candidates: Awaited<ReturnType<typeof provider.searchTokens>>;
+    try {
+      candidates = await provider.searchTokens(project.ticker as string);
+    } catch {
+      // One project's lookup failing (network, unexpected 4xx, etc.) must
+      // not lose progress on every other gap project in this run — same
+      // resilience policy as src/sync/chainbroker/paged-sync.ts.
+      continue;
+    }
     const exactMatches = candidates.filter(
       (c) => c.symbol.toUpperCase() === (project.ticker as string).toUpperCase(),
     );

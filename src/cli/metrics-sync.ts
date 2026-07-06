@@ -4,13 +4,17 @@
 //
 //   tsx src/cli/metrics-sync.ts --provider=coingecko|defillama|coinpaprika|dexscreener|all
 //
-// `all` runs every provider in dependency order: coingecko -> defillama
-// (independent domain, TVL) -> coinpaprika -> dexscreener. CoinPaprika and
-// DexScreener are gap-fillers (see their SOURCE.md files and
-// upsert-service.ts's `fillNullsOnly`) and must run after coingecko so
-// they only ever fill what it left null; dexscreener must run after
-// coinpaprika for the same reason (its gap query reflects whatever is
-// still missing at the moment it runs).
+// `all` runs every provider in dependency order: coinpaprika -> dexscreener
+// -> defillama (independent domain, TVL) -> coingecko. CoinPaprika and
+// DexScreener are the primary market-data sources now (flipped 2026-07-06
+// after CoinGecko's much larger 16,000+-coin catalog was found producing
+// wrong data — colliding tickers within one CoinGecko batch, e.g. 24
+// different unrelated tokens all named "HYPER" on DexScreener alone, could
+// silently overwrite a project with the wrong coin's price — see
+// ingestion-service.ts's batch-dedup guard and syncMetrics.ts's doc
+// comments). CoinGecko now only fills what CoinPaprika/DexScreener left
+// null (`fillNullsOnly`) and must run last; dexscreener must run after
+// coinpaprika so its gap query reflects whatever coinpaprika just filled.
 //
 // Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the environment
 // (see src/ingestion/chainbroker/supabase-client.ts — reused here since
@@ -70,17 +74,17 @@ async function main(): Promise<void> {
 
     const reports: MetricsSyncReport[] = [];
 
-    if (provider === "coingecko" || provider === "all") {
-      reports.push(await syncCoinGeckoMetrics(supabase, new CoinGeckoClient()));
-    }
-    if (provider === "defillama" || provider === "all") {
-      reports.push(await syncDefiLlamaMetrics(supabase, new DefiLlamaClient()));
-    }
     if (provider === "coinpaprika" || provider === "all") {
       reports.push(await syncCoinPaprikaMetrics(supabase, new CoinPaprikaClient()));
     }
     if (provider === "dexscreener" || provider === "all") {
       reports.push(await syncDexScreenerGapFill(supabase, new DexScreenerClient()));
+    }
+    if (provider === "defillama" || provider === "all") {
+      reports.push(await syncDefiLlamaMetrics(supabase, new DefiLlamaClient()));
+    }
+    if (provider === "coingecko" || provider === "all") {
+      reports.push(await syncCoinGeckoMetrics(supabase, new CoinGeckoClient()));
     }
 
     console.log(JSON.stringify(provider === "all" ? reports : reports[0], null, 2));

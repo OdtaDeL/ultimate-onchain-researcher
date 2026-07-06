@@ -50,10 +50,10 @@ jobs:
 
       - run: npm ci
 
-      # CoinGecko -> DefiLlama -> CoinPaprika -> DexScreener, in that order
-      # (CoinPaprika/DexScreener are gap-fillers and must run after
-      # CoinGecko — see src/ingestion/metrics/syncMetrics.ts's doc
-      # comments on why order matters here).
+      # CoinPaprika -> DexScreener -> DefiLlama -> CoinGecko, in that order
+      # (CoinGecko now only fills what CoinPaprika/DexScreener left null —
+      # see src/ingestion/metrics/syncMetrics.ts's doc comments for why
+      # this was flipped 2026-07-06).
       - name: Sync market metrics
         run: npm run sync:metrics -- --provider=all
 

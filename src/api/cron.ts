@@ -124,16 +124,20 @@ export async function runFullSync(): Promise<SyncResult> {
   });
 
   const metrics = await runPhase("metrics", async () => {
-    await syncCoinGeckoMetrics(supabase, new CoinGeckoClient());
-    await syncDefiLlamaMetrics(supabase, new DefiLlamaClient());
-    // Gap-fill only (see providers/coinpaprika/SOURCE.md) — one bulk
-    // request, negligible added time. DexScreener (also a gap-filler) is
-    // deliberately NOT included here: it queries once per unmatched
-    // project (potentially hundreds, at 1 req/sec) and could alone
-    // consume this function's entire maxDuration budget, starving the
-    // scoring phase below. Run it manually/on a separate schedule
-    // instead: `npm run sync:metrics -- --provider=dexscreener`.
+    // CoinPaprika is the primary market-data source now (flipped
+    // 2026-07-06 — see syncMetrics.ts's doc comments: CoinGecko's much
+    // larger catalog was found producing wrong data via colliding
+    // tickers within one batch). CoinGecko now only fills what
+    // CoinPaprika left null and must run last. DexScreener (also
+    // primary, alongside CoinPaprika) is deliberately NOT included here:
+    // it queries once per unmatched project (potentially hundreds, at
+    // 1 req/sec) and could alone consume this function's entire
+    // maxDuration budget, starving the scoring phase below. Run it
+    // manually/on a separate schedule instead:
+    // `npm run sync:metrics -- --provider=dexscreener`.
     await syncCoinPaprikaMetrics(supabase, new CoinPaprikaClient());
+    await syncDefiLlamaMetrics(supabase, new DefiLlamaClient());
+    await syncCoinGeckoMetrics(supabase, new CoinGeckoClient());
   });
 
   const scoring = await runPhase("scoring", async () => {
