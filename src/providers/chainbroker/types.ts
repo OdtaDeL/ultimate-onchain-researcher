@@ -169,3 +169,41 @@ export interface NormalizedProjectRef {
   ticker: string | null;
   logoUrl: string | null;
 }
+
+// ---------------------------------------------------------------------
+// Trending + per-project metrics/TVL — NOT YET IMPLEMENTED.
+//
+// GET /projects/trending/, /projects/metrics/{slug}/, and
+// /projects/tvl/{slug}/ are documented in SOURCE.md's endpoint inventory
+// but no Raw* shape has been confirmed against a live response yet
+// (chainbroker.io was Cloudflare-soft-blocking this environment as of
+// 2026-07-06 — see SOURCE.md "Rate limits"). Only the *normalized* output
+// contracts are defined here — our own downstream shape, not a claim
+// about the raw API — so the provider interface and callers can be wired
+// ahead of the raw-parsing work. Add `RawTrendingProject` /
+// `RawProjectMetricsResponse` / `RawProjectTvlResponse` plus their zod
+// schemas in schemas.ts and the client.ts normalizers ONLY once each
+// shape has been confirmed live, per this file's own header rule.
+// ---------------------------------------------------------------------
+
+export interface NormalizedTrendingProject {
+  slug: string;
+  /** 1 = hottest. Position in ChainBroker's trending list at fetch time. */
+  rank: number;
+}
+
+/** Per-project market data — a ChainBroker-sourced alternative to CoinGecko for projects identity resolution can't match (see src/ingestion/metrics/). Keyed by our own slug, so no matching step is needed. */
+export interface NormalizedProjectMetricsSnapshot {
+  slug: string;
+  priceUsd: number | null;
+  marketCapUsd: number | null;
+  fdvUsd: number | null;
+  volume24hUsd: number | null;
+  priceChange24hPercent: number | null;
+}
+
+export interface NormalizedProjectTvlSnapshot {
+  slug: string;
+  tvlUsd: number | null;
+  tvlChange1dPercent: number | null;
+}

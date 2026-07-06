@@ -1,6 +1,8 @@
 // Cron handler — called by Vercel Cron on the schedule in vercel.json.
 // Runs the full sync pipeline: ChainBroker (projects/funds/rounds/unlocks)
-// → market metrics (CoinGecko + DefiLlama) → scoring engine → freshness check.
+// → market metrics (CoinGecko + DefiLlama + CoinPaprika gap-fill) →
+// scoring engine → freshness check. DexScreener (a third, slower gap-fill
+// source) is CLI-only — see the "metrics" phase below for why.
 //
 // Each phase is isolated: a ChainBroker failure does NOT abort metrics or
 // scoring. Per-phase results are logged and returned in the response body so
@@ -23,9 +25,10 @@ import { syncFunds } from "../sync/chainbroker/syncFunds";
 import { syncFundingRounds } from "../sync/chainbroker/syncFundingRounds";
 import { syncProjects } from "../sync/chainbroker/syncProjects";
 import { syncUnlocks } from "../sync/chainbroker/syncUnlocks";
-import { syncCoinGeckoMetrics, syncDefiLlamaMetrics } from "../ingestion/metrics/syncMetrics";
+import { syncCoinGeckoMetrics, syncCoinPaprikaMetrics, syncDefiLlamaMetrics } from "../ingestion/metrics/syncMetrics";
 import { CoinGeckoClient } from "../providers/coingecko/client";
 import { DefiLlamaClient } from "../providers/defillama/client";
+import { CoinPaprikaClient } from "../providers/coinpaprika/client";
 import { runScoringSync } from "../scoring-sync/scoring-sync";
 
 export interface PhaseResult {
@@ -123,6 +126,14 @@ export async function runFullSync(): Promise<SyncResult> {
   const metrics = await runPhase("metrics", async () => {
     await syncCoinGeckoMetrics(supabase, new CoinGeckoClient());
     await syncDefiLlamaMetrics(supabase, new DefiLlamaClient());
+    // Gap-fill only (see providers/coinpaprika/SOURCE.md) — one bulk
+    // request, negligible added time. DexScreener (also a gap-filler) is
+    // deliberately NOT included here: it queries once per unmatched
+    // project (potentially hundreds, at 1 req/sec) and could alone
+    // consume this function's entire maxDuration budget, starving the
+    // scoring phase below. Run it manually/on a separate schedule
+    // instead: `npm run sync:metrics -- --provider=dexscreener`.
+    await syncCoinPaprikaMetrics(supabase, new CoinPaprikaClient());
   });
 
   const scoring = await runPhase("scoring", async () => {

@@ -15,6 +15,13 @@
 import { createIngestionSupabaseClient } from "../ingestion/chainbroker/supabase-client";
 import { runRefreshOnly, runScoringSync } from "../scoring-sync/scoring-sync";
 
+// See chainbroker-sync.ts's identical block for why this is needed.
+try {
+  process.loadEnvFile();
+} catch {
+  // .env not found — fine when env vars come from the platform instead.
+}
+
 function parseArgs(argv: string[]): { all: boolean; refreshOnly: boolean; projectSlug: string | undefined } {
   let all = false;
   let refreshOnly = false;

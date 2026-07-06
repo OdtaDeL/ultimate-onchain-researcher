@@ -6,7 +6,7 @@
 
 import type { ProviderIdentity } from "../../identity/identity-service";
 
-export type MetricsProvider = "coingecko" | "defillama";
+export type MetricsProvider = "coingecko" | "defillama" | "coinpaprika" | "dexscreener";
 
 /** Columns CoinGecko owns. CoinGecko ingestion must never touch any column outside this type. */
 export interface CoinGeckoMetricsColumns {
@@ -36,7 +36,46 @@ export interface DefiLlamaMetricsColumns {
   fees_30d: number | null;
 }
 
-export type MetricsColumns = CoinGeckoMetricsColumns | DefiLlamaMetricsColumns;
+/**
+ * Columns CoinPaprika owns. Same underlying column set CoinGecko writes
+ * (both are general market-data providers), which is normally forbidden
+ * (see "own columns" rule above) — safe here ONLY because CoinPaprika
+ * ingestion always runs through `MetricsUpsertService`'s `fillNullsOnly`
+ * mode (see upsert-service.ts), which structurally cannot overwrite a
+ * value CoinGecko already supplied. No `fdv` — CoinPaprika's `/tickers`
+ * has no such field (see providers/coinpaprika/SOURCE.md).
+ */
+export interface CoinPaprikaMetricsColumns {
+  price: number | null;
+  market_cap: number | null;
+  volume_24h: number | null;
+  market_cap_rank: number | null;
+  total_supply: number | null;
+  max_supply: number | null;
+  price_change_24h: number | null;
+  price_change_7d: number | null;
+  price_change_30d: number | null;
+  ath: number | null;
+}
+
+/**
+ * Columns DexScreener owns. Same `fillNullsOnly`-only safety rule as
+ * CoinPaprika above. Narrower still — DexScreener's search endpoint has
+ * no supply/ATH/ATL/7d/30d fields at all (see providers/dexscreener/SOURCE.md).
+ */
+export interface DexScreenerMetricsColumns {
+  price: number | null;
+  market_cap: number | null;
+  fdv: number | null;
+  volume_24h: number | null;
+  price_change_24h: number | null;
+}
+
+export type MetricsColumns =
+  | CoinGeckoMetricsColumns
+  | DefiLlamaMetricsColumns
+  | CoinPaprikaMetricsColumns
+  | DexScreenerMetricsColumns;
 
 /**
  * Output of mapper.ts — one provider record, not yet identity-resolved.

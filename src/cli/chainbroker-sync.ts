@@ -28,6 +28,17 @@ import { syncProjects } from "../sync/chainbroker/syncProjects";
 import { syncUnlocks } from "../sync/chainbroker/syncUnlocks";
 import type { SyncJobOptions } from "../sync/chainbroker/types";
 
+// CLI entrypoints run standalone (not through Next.js, which loads .env on
+// its own) — without this, every env.ts getter below throws "Missing
+// required environment variable" even with a populated .env file present.
+// No-op (rather than throwing) when .env doesn't exist, e.g. CI/production
+// where the platform injects real env vars directly.
+try {
+  process.loadEnvFile();
+} catch {
+  // .env not found — fine when env vars come from the platform instead.
+}
+
 const COMMANDS = ["projects", "funds", "funding-rounds", "unlocks", "bootstrap", "all"] as const;
 type Command = (typeof COMMANDS)[number];
 

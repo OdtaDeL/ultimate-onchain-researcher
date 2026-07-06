@@ -17,14 +17,19 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../../types/database.types";
 import type { CoinGeckoProvider, CoinsMarketsParams } from "../../providers/coingecko/provider";
 import type { DefiLlamaProvider } from "../../providers/defillama/provider";
+import type { CoinPaprikaProvider } from "../../providers/coinpaprika/provider";
+import type { DexScreenerProvider } from "../../providers/dexscreener/provider";
+import { getProjectsMissingMarketData } from "./gap-query";
 import { MetricsIngestionService } from "./ingestion-service";
 import {
   mapCoinGeckoMetrics,
+  mapCoinPaprikaMetrics,
   mapDefiLlamaFeesMetrics,
   mapDefiLlamaRevenueMetrics,
   mapDefiLlamaTvlMetrics,
+  mapDexScreenerMetrics,
 } from "./mapper";
-import type { MetricsSyncReport } from "./types";
+import type { DexScreenerMetricsColumns, MetricsDraft, MetricsSyncReport } from "./types";
 
 export interface SyncMetricsOptions {
   /** Caps how many /coins/markets pages CoinGecko fetches. Omit for the full catalog. */
@@ -188,4 +193,67 @@ export async function syncDefiLlamaProtocolFeesAndRevenue(
 
   const result = await ingestion.ingest(drafts);
   return buildReport("defillama", startedAt, new Date(), result);
+}
+
+/**
+ * Gap-fill only — see mapper.ts's `mapCoinPaprikaMetrics` doc comment and
+ * upsert-service.ts's `fillNullsOnly`. Run this AFTER `syncCoinGeckoMetrics`
+ * in any given sync so it only ever fills what CoinGecko left null; running
+ * it first would mean CoinGecko's later, better-covered write simply
+ * overwrites CoinPaprika's value anyway (harmless, but wasteful ordering).
+ */
+export async function syncCoinPaprikaMetrics(
+  supabase: SupabaseClient<Database>,
+  provider: CoinPaprikaProvider,
+): Promise<MetricsSyncReport> {
+  const startedAt = new Date();
+  const ingestion = new MetricsIngestionService(supabase);
+
+  const tickers = await provider.listTickers();
+  const drafts = tickers.map(mapCoinPaprikaMetrics);
+  const result = await ingestion.ingest(drafts, true);
+
+  return buildReport("coinpaprika", startedAt, new Date(), result);
+}
+
+/**
+ * Gap-fill only, third and narrowest source — run this LAST, after both
+ * `syncCoinGeckoMetrics` and `syncCoinPaprikaMetrics`, so `getProjectsMissingMarketData`
+ * reflects whatever gap those two left behind rather than the original,
+ * larger gap. Unlike the bulk providers above, DexScreener has no
+ * "list everything" endpoint — this queries once per gap project with a
+ * ChainBroker ticker (rate-limited via the provider's own 1 req/sec
+ * limiter — see providers/dexscreener/SOURCE.md), accepting a candidate
+ * only on an exact, unambiguous ticker-symbol match (see
+ * providers/dexscreener/SOURCE.md "Matching strategy").
+ */
+export async function syncDexScreenerGapFill(
+  supabase: SupabaseClient<Database>,
+  provider: DexScreenerProvider,
+): Promise<MetricsSyncReport> {
+  const startedAt = new Date();
+  const ingestion = new MetricsIngestionService(supabase);
+
+  const gapProjects = await getProjectsMissingMarketData(supabase);
+  const withTicker = gapProjects.filter((p) => p.ticker !== null && p.ticker !== "");
+
+  const drafts: MetricsDraft<DexScreenerMetricsColumns>[] = [];
+  for (const project of withTicker) {
+    const candidates = await provider.searchTokens(project.ticker as string);
+    const exactMatches = candidates.filter(
+      (c) => c.symbol.toUpperCase() === (project.ticker as string).toUpperCase(),
+    );
+    // 0 matches: no signal. >1: ambiguous (e.g. the same ticker bridged
+    // across chains with different addresses) — skip rather than guess,
+    // same "never guess" principle as src/identity/.
+    if (exactMatches.length === 1) {
+      drafts.push(mapDexScreenerMetrics(exactMatches[0]));
+    }
+  }
+
+  const result = await ingestion.ingest(drafts, true);
+  return buildReport("dexscreener", startedAt, new Date(), {
+    ...result,
+    totalProviderRecords: withTicker.length,
+  });
 }

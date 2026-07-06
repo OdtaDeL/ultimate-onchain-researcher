@@ -33,6 +33,9 @@ export interface Database {
           website: string | null;
           twitter: string | null;
           metadata: Json;
+          is_trending: boolean;
+          trending_rank: number | null;
+          trending_synced_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -47,6 +50,9 @@ export interface Database {
           website?: string | null;
           twitter?: string | null;
           metadata?: Json;
+          is_trending?: boolean;
+          trending_rank?: number | null;
+          trending_synced_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };

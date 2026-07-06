@@ -86,8 +86,13 @@ export class MetricsIngestionService {
     this.upsertService = new MetricsUpsertService(supabase);
   }
 
+  /**
+   * `fillNullsOnly` (default false): see MetricsUpsertService.upsertProviderMetrics's
+   * doc comment. Pass `true` for gap-filling providers (CoinPaprika, DexScreener).
+   */
   async ingest<TColumns extends MetricsColumns>(
     drafts: MetricsDraft<TColumns>[],
+    fillNullsOnly = false,
   ): Promise<MetricsIngestionResult> {
     const breakdown = emptyBreakdown();
     const resolved: ResolvedMetricsDraft<TColumns>[] = [];
@@ -127,7 +132,7 @@ export class MetricsIngestionService {
 
     for (const draft of deduped) {
       try {
-        const outcome = await this.upsertService.upsertProviderMetrics(draft.projectId, draft.columns);
+        const outcome = await this.upsertService.upsertProviderMetrics(draft.projectId, draft.columns, fillNullsOnly);
         if (outcome === "inserted") inserted += 1;
         else if (outcome === "updated") updated += 1;
         else unchanged += 1;

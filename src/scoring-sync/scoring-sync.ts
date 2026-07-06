@@ -82,10 +82,12 @@ async function loadProjectScoringData(
   const asOfIso = toIsoDate(asOf);
 
   // Full table scans — `.in()` with thousands of UUIDs exceeds PostgREST's
-  // GET URL length limit (~8 KB). All three source tables are small enough
-  // that a full scan is faster and simpler: project_metrics ~500 rows,
-  // funding_rounds ~100s, token_unlock_events ~100s. The in-memory Map
-  // below filters results to only the requested targets.
+  // GET URL length limit (~8 KB). project_metrics and token_unlock_events
+  // are small enough for a full scan; funding_rounds turned out not to be
+  // (ChainBroker's global feed alone is ~3,900 rounds — see
+  // src/providers/chainbroker/SOURCE.md), so the funding_investors lookup
+  // below batches its own `.in()` call instead. The in-memory Map below
+  // filters results to only the requested targets.
   const [metricsResult, fundingRoundsResult, unlockEventsResult] = await Promise.all([
     supabase
       .from("project_metrics")
@@ -111,15 +113,18 @@ async function loadProjectScoringData(
     throw new Error(`Failed to load token_unlock_events: ${unlockEventsResult.error.message}`);
 
   const fundingRoundIds = fundingRoundsResult.data.map((r) => r.id);
-  const { data: fundingInvestorsData, error: fundingInvestorsError } =
-    fundingRoundIds.length === 0
-      ? { data: [], error: null }
-      : await supabase
-          .from("funding_investors")
-          .select("funding_round_id, fund_id")
-          .in("funding_round_id", fundingRoundIds);
-  if (fundingInvestorsError) {
-    throw new Error(`Failed to load funding_investors: ${fundingInvestorsError.message}`);
+  // Batched to stay under PostgREST's ~8 KB GET URL length limit — a UUID
+  // is 36 chars, so 200 IDs per `.in()` call stays comfortably inside it.
+  const FUNDING_ROUND_ID_BATCH_SIZE = 200;
+  const fundingInvestorsData: { funding_round_id: string; fund_id: string }[] = [];
+  for (let i = 0; i < fundingRoundIds.length; i += FUNDING_ROUND_ID_BATCH_SIZE) {
+    const batch = fundingRoundIds.slice(i, i + FUNDING_ROUND_ID_BATCH_SIZE);
+    const { data, error } = await supabase
+      .from("funding_investors")
+      .select("funding_round_id, fund_id")
+      .in("funding_round_id", batch);
+    if (error) throw new Error(`Failed to load funding_investors (batch starting at ${i}): ${error.message}`);
+    fundingInvestorsData.push(...data);
   }
 
   const fundingRoundProjectById = new Map(fundingRoundsResult.data.map((r) => [r.id, r.project_id]));

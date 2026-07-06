@@ -71,6 +71,30 @@ function diffColumns<TColumns extends MetricsColumns>(
   return changed as Partial<TColumns>;
 }
 
+/**
+ * Same as `diffColumns`, but only includes a key when the *existing* value
+ * is null/missing — never when it merely differs. This is the entire
+ * mechanism behind CoinPaprika/DexScreener being safe to give the exact
+ * same column names CoinGecko owns (see types.ts's doc comments on
+ * `CoinPaprikaMetricsColumns`/`DexScreenerMetricsColumns`): a gap-filler
+ * can only ever write into a hole, never overwrite a value a
+ * higher-priority provider already supplied.
+ */
+function fillNullColumns<TColumns extends MetricsColumns>(
+  existing: ProjectMetricsRow,
+  incoming: Partial<TColumns>,
+): Partial<TColumns> {
+  const changed: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(incoming)) {
+    if (value === null || value === undefined) continue;
+    const existingValue = (existing as unknown as Record<string, unknown>)[key];
+    if (existingValue === null || existingValue === undefined) {
+      changed[key] = value;
+    }
+  }
+  return changed as Partial<TColumns>;
+}
+
 export class MetricsUpsertService {
   constructor(private readonly supabase: SupabaseClient<Database>) {}
 
@@ -78,10 +102,18 @@ export class MetricsUpsertService {
    * Upserts one provider's columns for one project. Never writes a
    * column outside `columns` — see file header. Returns which of
    * inserted/updated/unchanged actually happened, for the sync report.
+   *
+   * `fillNullsOnly` (default false, preserves CoinGecko/DefiLlama's
+   * existing overwrite-on-change behavior exactly): when true, an
+   * existing row is only ever updated for columns currently null — see
+   * `fillNullColumns` above. Pass `true` for gap-filling providers
+   * (CoinPaprika, DexScreener) that share column names with a
+   * higher-priority provider.
    */
   async upsertProviderMetrics<TColumns extends MetricsColumns>(
     projectId: string,
     columns: Partial<TColumns>,
+    fillNullsOnly = false,
   ): Promise<UpsertOutcome> {
     const { data: existing, error: selectError } = await this.supabase
       .from("project_metrics")
@@ -100,7 +132,7 @@ export class MetricsUpsertService {
       return "inserted";
     }
 
-    const changed = diffColumns(existing, columns);
+    const changed = fillNullsOnly ? fillNullColumns(existing, columns) : diffColumns(existing, columns);
     if (Object.keys(changed).length === 0) {
       return "unchanged";
     }

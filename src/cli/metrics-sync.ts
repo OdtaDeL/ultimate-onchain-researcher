@@ -2,7 +2,15 @@
 // CLI for the unified Market Metrics sync. Run via `npm run sync:metrics`
 // or directly:
 //
-//   tsx src/cli/metrics-sync.ts --provider=coingecko|defillama|all
+//   tsx src/cli/metrics-sync.ts --provider=coingecko|defillama|coinpaprika|dexscreener|all
+//
+// `all` runs every provider in dependency order: coingecko -> defillama
+// (independent domain, TVL) -> coinpaprika -> dexscreener. CoinPaprika and
+// DexScreener are gap-fillers (see their SOURCE.md files and
+// upsert-service.ts's `fillNullsOnly`) and must run after coingecko so
+// they only ever fill what it left null; dexscreener must run after
+// coinpaprika for the same reason (its gap query reflects whatever is
+// still missing at the moment it runs).
 //
 // Requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY in the environment
 // (see src/ingestion/chainbroker/supabase-client.ts — reused here since
@@ -15,10 +23,24 @@
 import { createIngestionSupabaseClient } from "../ingestion/chainbroker/supabase-client";
 import { CoinGeckoClient } from "../providers/coingecko/client";
 import { DefiLlamaClient } from "../providers/defillama/client";
-import { syncCoinGeckoMetrics, syncDefiLlamaMetrics } from "../ingestion/metrics/syncMetrics";
+import { CoinPaprikaClient } from "../providers/coinpaprika/client";
+import { DexScreenerClient } from "../providers/dexscreener/client";
+import {
+  syncCoinGeckoMetrics,
+  syncCoinPaprikaMetrics,
+  syncDefiLlamaMetrics,
+  syncDexScreenerGapFill,
+} from "../ingestion/metrics/syncMetrics";
 import type { MetricsSyncReport } from "../ingestion/metrics/types";
 
-const PROVIDERS = ["coingecko", "defillama", "all"] as const;
+// See chainbroker-sync.ts's identical block for why this is needed.
+try {
+  process.loadEnvFile();
+} catch {
+  // .env not found — fine when env vars come from the platform instead.
+}
+
+const PROVIDERS = ["coingecko", "defillama", "coinpaprika", "dexscreener", "all"] as const;
 type ProviderArg = (typeof PROVIDERS)[number];
 
 function parseArgs(argv: string[]): { provider: string | undefined } {
@@ -53,6 +75,12 @@ async function main(): Promise<void> {
     }
     if (provider === "defillama" || provider === "all") {
       reports.push(await syncDefiLlamaMetrics(supabase, new DefiLlamaClient()));
+    }
+    if (provider === "coinpaprika" || provider === "all") {
+      reports.push(await syncCoinPaprikaMetrics(supabase, new CoinPaprikaClient()));
+    }
+    if (provider === "dexscreener" || provider === "all") {
+      reports.push(await syncDexScreenerGapFill(supabase, new DexScreenerClient()));
     }
 
     console.log(JSON.stringify(provider === "all" ? reports : reports[0], null, 2));

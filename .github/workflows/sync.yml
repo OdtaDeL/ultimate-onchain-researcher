@@ -1,0 +1,52 @@
+name: Daily Data Sync
+
+# Runs the full ingestion + scoring pipeline on GitHub's runner instead of
+# Vercel's serverless functions. Necessary, not a style choice: Vercel's
+# Hobby (free) plan hard-caps every serverless function at 10 seconds
+# regardless of the `maxDuration` declared in src/app/api/cron/sync/route.ts
+# — the full pipeline (ChainBroker crawl + market metrics + scoring 2,000+
+# projects) takes tens of minutes, so it could never complete there. GitHub
+# Actions has no such ceiling (up to 6h per job on the free tier).
+#
+# Runs the exact same CLI entrypoints a developer would run locally
+# (npm run sync:*) — no duplicate ingestion logic lives in this workflow.
+
+on:
+  schedule:
+    # 02:00 UTC daily — same schedule vercel.json previously declared.
+    - cron: "0 2 * * *"
+  # Lets you trigger a run on demand from the Actions tab, without waiting
+  # for the schedule or reaching for the CLI locally.
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      # ChainBroker: projects, funds, funding rounds, unlocks.
+      - name: Sync ChainBroker
+        run: npm run sync:all
+
+      # CoinGecko -> DefiLlama -> CoinPaprika -> DexScreener, in that order
+      # (CoinPaprika/DexScreener are gap-fillers and must run after
+      # CoinGecko — see src/ingestion/metrics/syncMetrics.ts's doc
+      # comments on why order matters here).
+      - name: Sync market metrics
+        run: npm run sync:metrics -- --provider=all
+
+      # Must run last — depends on the funding/unlock/metrics data above.
+      - name: Recompute scores
+        run: npm run sync:scores -- --all
