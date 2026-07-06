@@ -58,22 +58,39 @@ function rowToAlias(row: AliasRow): ProjectAlias {
   };
 }
 
+/**
+ * Paginated via `.range()` for the same reason as `fetchProjectCandidates`
+ * below — CoinGecko alone has already matched 1,244 projects (confirmed
+ * live 2026-07-06), past the 1,000-row PostgREST cap an unpaginated
+ * `.select()` would silently hit. Missing aliases here doesn't lose data
+ * outright (the direct tiers would just re-resolve most of them), but it
+ * defeats the alias-table cache for whichever ones fell outside the
+ * window, and a provider's formatting drifting slightly between runs
+ * could make one of those silently stop matching.
+ */
 async function fetchAliasesForProvider(
   supabase: SupabaseClient<Database>,
   provider: string,
 ): Promise<ProjectAlias[]> {
-  const { data, error } = await supabase
-    .from("project_aliases")
-    .select("*")
-    .eq("provider", provider);
-  if (error) {
-    throw new IdentityConflictError(
-      `Failed to fetch existing aliases for provider "${provider}": ${describeError(error)}`,
-      provider,
-      error,
-    );
+  const PAGE = 1_000;
+  const rows: Database["public"]["Tables"]["project_aliases"]["Row"][] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("project_aliases")
+      .select("*")
+      .eq("provider", provider)
+      .range(from, from + PAGE - 1);
+    if (error) {
+      throw new IdentityConflictError(
+        `Failed to fetch existing aliases for provider "${provider}" (offset ${from}): ${describeError(error)}`,
+        provider,
+        error,
+      );
+    }
+    rows.push(...data);
+    if (data.length < PAGE) break;
   }
-  return (data ?? []).map(rowToAlias);
+  return rows.map(rowToAlias);
 }
 
 /**
@@ -81,21 +98,41 @@ async function fetchAliasesForProvider(
  * and transparent at the current scale (low thousands of rows from the
  * ChainBroker bootstrap) — see IDENTITY.md "Known limitation: full-table
  * fetch" for why this isn't per-tier targeted queries, and when to revisit.
+ *
+ * Paginated via `.range()` — PostgREST enforces a server-side max_rows
+ * cap of 1,000 regardless of any client-side `.limit()`/lack thereof
+ * (confirmed live 2026-07-06: this table has 2,251 rows, so an
+ * unpaginated `.select()` silently returned only ~1,000 of them,
+ * excluding whichever projects didn't fall in that arbitrary window —
+ * `id` has no ORDER BY here, so which ones were missing was effectively
+ * random). Any of those excluded projects were structurally unmatchable
+ * by every provider, no matter how good that provider's own data was —
+ * this is how a well-known project like Aave ended up with zero metrics
+ * despite CoinGecko/CoinPaprika/DexScreener all having correct data for
+ * it. Same fix already applied to src/scoring-sync/scoring-sync.ts's
+ * `loadTargetProjects` for the identical PostgREST behavior.
  */
 async function fetchProjectCandidates(
   supabase: SupabaseClient<Database>,
 ): Promise<ProjectIdentityCandidate[]> {
-  const { data, error } = await supabase
-    .from("projects")
-    .select("id, slug, name, ticker, metadata");
-  if (error) {
-    throw new IdentityConflictError(
-      `Failed to fetch projects for identity matching: ${describeError(error)}`,
-      "*",
-      error,
-    );
+  const PAGE = 1_000;
+  const data: { id: string; slug: string; name: string; ticker: string | null; metadata: unknown }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data: page, error } = await supabase
+      .from("projects")
+      .select("id, slug, name, ticker, metadata")
+      .range(from, from + PAGE - 1);
+    if (error) {
+      throw new IdentityConflictError(
+        `Failed to fetch projects for identity matching (offset ${from}): ${describeError(error)}`,
+        "*",
+        error,
+      );
+    }
+    data.push(...page);
+    if (page.length < PAGE) break;
   }
-  return (data ?? []).map((p) => {
+  return data.map((p) => {
     const metadata = p.metadata;
     const contractAddress =
       typeof metadata === "object" &&
