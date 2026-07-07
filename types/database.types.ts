@@ -185,6 +185,10 @@ export interface Database {
           unlock_score: number | null;
           momentum_score: number | null;
           total_score: number | null;
+          /** Cache only — see supabase/migrations/014_scoring_pillars.sql. Never canonical. */
+          pillar_breakdown: Json | null;
+          data_completeness_percent: number | null;
+          data_freshness_score: number | null;
           score_date: string;
           created_at: string;
         };
@@ -199,6 +203,9 @@ export interface Database {
           unlock_score?: number | null;
           momentum_score?: number | null;
           total_score?: number | null;
+          pillar_breakdown?: Json | null;
+          data_completeness_percent?: number | null;
+          data_freshness_score?: number | null;
           score_date: string;
           created_at?: string;
         };

@@ -12,6 +12,7 @@
 //     absent from nextUnlock — the page omits the risk Pill entirely.
 import { apiFetch } from "../client";
 import type {
+  Confidence,
   Grade,
   ProjectOverviewDto,
   ProjectFundingDto,
@@ -44,6 +45,10 @@ export interface ProjectData {
     score: number | null;
     /** Null when the project has not been scored yet. */
     grade: Grade | null;
+    /** Overall (pillars-combined) data completeness, 0-100. Null alongside `score`. */
+    completenessPercent: number | null;
+    /** Weakest-link(completeness tier, freshness tier) — never completeness alone. Null alongside `score`. */
+    confidence: Confidence | null;
     /** Null when no market metrics row exists for this project. */
     marketCap: number | null;
     fdv: number | null;
@@ -80,16 +85,37 @@ function formatUnlockDate(isoDate: string): string {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 }
 
+// Display labels for the 6 research pillars (src/scoring/types.ts
+// PillarKey) — "Chart" surfaces price-momentum only today, not real
+// technical analysis (see momentum-score.ts).
+const PILLAR_LABELS: Record<string, string> = {
+  vc_market_makers: "VC & Market Makers",
+  business_model: "Business Model",
+  tokenomics: "Tokenomics",
+  chart: "Chart",
+  team: "Team",
+  community: "Community",
+};
+
+/**
+ * Maps the 6 research pillars into the flat ScoreCategory[] shape the
+ * radar chart / progress-bar list already render. A pillar with
+ * `value: null` (no present signal at all — e.g. Team/Community, both
+ * fully `not_implemented` today) is omitted here, same convention the
+ * old 7-flat-score mapping used — this list is a "what we can show as a
+ * number" view. The full per-signal state (missing/not_applicable/
+ * not_implemented/provider_error, never collapsed to a bare null) stays
+ * available on `score.pillars` for any surface that needs it.
+ */
 function mapScoreCategories(score: ScoreSummaryDto | null): ScoreCategory[] {
   if (!score) return [];
-  const cats: ScoreCategory[] = [];
-  if (score.marketScore !== null) cats.push({ key: "market", label: "Market", score: score.marketScore });
-  if (score.fundingScore !== null) cats.push({ key: "funding", label: "Funding", score: score.fundingScore });
-  if (score.investorScore !== null) cats.push({ key: "investor", label: "Investor", score: score.investorScore });
-  if (score.unlockScore !== null) cats.push({ key: "unlock", label: "Unlock", score: score.unlockScore });
-  if (score.tvlScore !== null) cats.push({ key: "tvl", label: "TVL", score: score.tvlScore });
-  if (score.revenueScore !== null) cats.push({ key: "revenue", label: "Revenue", score: score.revenueScore });
-  if (score.momentumScore !== null) cats.push({ key: "momentum", label: "Momentum", score: score.momentumScore });
+  const cats: ScoreCategory[] = score.pillars
+    .filter((pillar) => pillar.value !== null)
+    .map((pillar) => ({
+      key: pillar.key,
+      label: PILLAR_LABELS[pillar.key] ?? pillar.key,
+      score: pillar.value as number,
+    }));
   if (score.totalScore !== null) cats.push({ key: "overall", label: "Overall", score: score.totalScore });
   return cats;
 }
@@ -146,6 +172,8 @@ export async function fetchProjectData(slug: string, signal?: AbortSignal): Prom
       category: overview.category,
       score: overview.score?.totalScore ?? null,
       grade: overview.score?.grade ?? null,
+      completenessPercent: overview.score?.completenessPercent ?? null,
+      confidence: overview.score?.confidence ?? null,
       marketCap: metrics?.marketCapUsd ?? null,
       fdv: metrics?.fdvUsd ?? null,
       tvl: metrics?.tvlUsd ?? null,

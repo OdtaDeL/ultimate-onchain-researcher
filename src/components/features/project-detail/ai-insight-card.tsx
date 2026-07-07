@@ -25,7 +25,7 @@ export function generateProjectInsight(input: AiInsightInput): string {
 
   // 1. Overall assessment, banded by total score.
   if (score >= 80) {
-    sentences.push(`${name} shows a standout overall profile, scoring ${score}/100 across our seven research pillars.`);
+    sentences.push(`${name} shows a standout overall profile, scoring ${score}/100 across our six research pillars.`);
   } else if (score >= 65) {
     sentences.push(`${name} presents a solid overall profile at ${score}/100, with clear strengths outweighing its weak spots.`);
   } else if (score >= 50) {

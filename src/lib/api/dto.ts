@@ -9,6 +9,7 @@
 // using their existing component Prop types as the "data" shape until a
 // real DTO exists — see src/lib/api/sources/home.ts.
 export type {
+  Confidence,
   Grade,
   MarketOverviewAssetDto,
   MarketOverviewDto,

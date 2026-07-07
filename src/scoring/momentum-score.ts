@@ -8,40 +8,47 @@
 // reads their *computed scores*; it independently re-derives its own
 // 0-100 from the same raw facts, with a different emphasis (short-term
 // acceleration, not magnitude).
+//
+// Returns null when there isn't enough data to compute a meaningful score
+// — see adaptive-weighted-average.ts's header. Every term here is now
+// excluded-and-renormalized when its input is missing, rather than
+// defaulted to a neutral 50 (or, for fundingRecency, the curve's worst
+// point — treating "no dated round" as "as stale as possible" was itself
+// a second instance of the same "missing != worst-case" bug).
 
-import { clampScore, interpolateCurve, DEFAULT_SCORING_CONFIG, type MomentumScoreConfig } from "./config";
+import { adaptiveWeightedAverage, type WeightedTerm } from "./adaptive-weighted-average";
+import { interpolateCurve, DEFAULT_SCORING_CONFIG, type MomentumScoreConfig } from "./config";
 import type { MomentumScoreInput } from "./types";
 
 export function calculateMomentumScore(
   input: MomentumScoreInput,
   config: MomentumScoreConfig = DEFAULT_SCORING_CONFIG.momentum,
-): number {
-  const fundingRecencyScore =
-    input.daysSinceLastRound === null
-      ? config.fundingRecencyCurveDays[config.fundingRecencyCurveDays.length - 1].score
-      : interpolateCurve(config.fundingRecencyCurveDays, input.daysSinceLastRound);
-
-  const priceMomentumScore =
-    input.priceChange24hPercent === null
-      ? 50
-      : interpolateCurve(config.priceMomentumCurvePercent, input.priceChange24hPercent);
-
-  const tvlMomentumScore =
-    input.tvlChange1dPercent === null
-      ? 50
-      : interpolateCurve(config.tvlMomentumCurvePercent, input.tvlChange1dPercent);
-
-  const revenueMomentumScore =
-    input.revenueMomentumPercent === null
-      ? 50
-      : interpolateCurve(config.revenueMomentumCurvePercent, input.revenueMomentumPercent);
-
+): number | null {
   const { fundingRecency, priceMomentum, tvlMomentum, revenueMomentum } = config.subWeights;
-  const combined =
-    fundingRecencyScore * fundingRecency +
-    priceMomentumScore * priceMomentum +
-    tvlMomentumScore * tvlMomentum +
-    revenueMomentumScore * revenueMomentum;
 
-  return clampScore(combined);
+  const terms: WeightedTerm[] = [
+    {
+      key: "fundingRecency",
+      value: input.daysSinceLastRound === null ? null : interpolateCurve(config.fundingRecencyCurveDays, input.daysSinceLastRound),
+      weight: fundingRecency,
+    },
+    {
+      key: "priceMomentum",
+      value: input.priceChange24hPercent === null ? null : interpolateCurve(config.priceMomentumCurvePercent, input.priceChange24hPercent),
+      weight: priceMomentum,
+    },
+    {
+      key: "tvlMomentum",
+      value: input.tvlChange1dPercent === null ? null : interpolateCurve(config.tvlMomentumCurvePercent, input.tvlChange1dPercent),
+      weight: tvlMomentum,
+    },
+    {
+      key: "revenueMomentum",
+      value: input.revenueMomentumPercent === null ? null : interpolateCurve(config.revenueMomentumCurvePercent, input.revenueMomentumPercent),
+      weight: revenueMomentum,
+    },
+  ];
+
+  const { value } = adaptiveWeightedAverage(terms);
+  return value;
 }

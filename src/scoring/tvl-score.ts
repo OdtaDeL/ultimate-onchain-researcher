@@ -1,37 +1,40 @@
 // TVL Score — pure function of TVL facts only. Never reads any other
-// score's output.
+// score's output. Returns null when there isn't enough data to compute a
+// meaningful score — see adaptive-weighted-average.ts's header.
 
-import { clampScore, interpolateCurve, DEFAULT_SCORING_CONFIG, type TvlScoreConfig } from "./config";
+import { adaptiveWeightedAverage, type WeightedTerm } from "./adaptive-weighted-average";
+import { interpolateCurve, DEFAULT_SCORING_CONFIG, type TvlScoreConfig } from "./config";
 import type { TvlScoreInput } from "./types";
 
 export function calculateTvlScore(
   input: TvlScoreInput,
   config: TvlScoreConfig = DEFAULT_SCORING_CONFIG.tvl,
-): number {
-  const tvlScore = interpolateCurve(config.tvlCurveUsd, input.tvlUsd ?? 0);
+): number | null {
+  const tvlScore = input.tvlUsd === null ? null : interpolateCurve(config.tvlCurveUsd, input.tvlUsd);
 
-  const d1 = input.tvlChange1dPercent;
-  const d7 = input.tvlChange7dPercent;
-  const growthTerms = [
-    [d1, config.growthWeights.d1],
-    [d7, config.growthWeights.d7],
-  ] as const;
-  const { weightedSum, weightTotal } = growthTerms.reduce(
-    (acc, [value, weight]) => {
-      if (value === null) return acc;
-      return {
-        weightedSum: acc.weightedSum + interpolateCurve(config.tvlChangeCurve, value) * weight,
-        weightTotal: acc.weightTotal + weight,
-      };
+  const growthTerms: WeightedTerm[] = [
+    {
+      key: "d1",
+      value: input.tvlChange1dPercent === null ? null : interpolateCurve(config.tvlChangeCurve, input.tvlChange1dPercent),
+      weight: config.growthWeights.d1,
     },
-    { weightedSum: 0, weightTotal: 0 },
-  );
-  const growthScore = weightTotal > 0 ? weightedSum / weightTotal : 50;
+    {
+      key: "d7",
+      value: input.tvlChange7dPercent === null ? null : interpolateCurve(config.tvlChangeCurve, input.tvlChange7dPercent),
+      weight: config.growthWeights.d7,
+    },
+  ];
+  const { value: growthScore } = adaptiveWeightedAverage(growthTerms);
 
+  // chainCount always has a value (defaults to 1 upstream — see types.ts's TvlScoreInput doc comment), never excluded.
   const chainDiversityScore = interpolateCurve(config.chainCountCurve, input.chainCount);
 
   const { tvl, growth, chainDiversity } = config.subWeights;
-  const combined = tvlScore * tvl + growthScore * growth + chainDiversityScore * chainDiversity;
+  const { value } = adaptiveWeightedAverage([
+    { key: "tvl", value: tvlScore, weight: tvl },
+    { key: "growth", value: growthScore, weight: growth },
+    { key: "chainDiversity", value: chainDiversityScore, weight: chainDiversity },
+  ]);
 
-  return clampScore(combined);
+  return value;
 }

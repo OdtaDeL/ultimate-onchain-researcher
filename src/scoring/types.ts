@@ -6,6 +6,8 @@
 // them even though no current ingestion code populates them yet — each
 // is flagged at its declaration with a safe default a caller can use.
 
+import type { Signal } from "./signal";
+
 // ---------------------------------------------------------------------
 // Funding Score
 // ---------------------------------------------------------------------
@@ -134,17 +136,21 @@ export interface MomentumScoreInput {
 }
 
 // ---------------------------------------------------------------------
-// Weighted Score
+// Weighted Score — internal sub-signal values feeding each pillar.
+// Renamed in meaning, not shape: these are no longer the engine's
+// top-level output (see "Research Pillars" below) — they're what each
+// pillar's Signal.normalizedScore is computed from, one call each into
+// the corresponding calculate*Score function.
 // ---------------------------------------------------------------------
 
 export interface ScoreBreakdown {
-  funding: number;
-  investor: number;
-  market: number;
-  tvl: number;
-  revenue: number;
-  unlock: number;
-  momentum: number;
+  funding: number | null;
+  investor: number | null;
+  market: number | null;
+  tvl: number | null;
+  revenue: number | null;
+  unlock: number | null;
+  momentum: number | null;
 }
 
 export interface ScoreWeights {
@@ -160,25 +166,7 @@ export interface ScoreWeights {
 export type Grade = "A+" | "A" | "B" | "C" | "D";
 
 // ---------------------------------------------------------------------
-// Score Explanation — structured, for a future AI Summary feature to
-// consume (see score-engine.ts). Plain phrases, no scoring logic lives
-// here; generated strictly from already-computed scores/inputs.
-// ---------------------------------------------------------------------
-
-export interface ScoreExplanation {
-  funding: string;
-  investor: string;
-  market: string;
-  tvl: string;
-  revenue: string;
-  unlock: string;
-  momentum: string;
-  /** Ordered, most-notable-first. A short highlight reel, not a repeat of the 7 fields above verbatim. */
-  highlights: string[];
-}
-
-// ---------------------------------------------------------------------
-// Score Engine — top-level input/output
+// Score Engine — sub-signal input (per pillar's leaf calculators)
 // ---------------------------------------------------------------------
 
 export interface ScoreEngineInput {
@@ -191,9 +179,34 @@ export interface ScoreEngineInput {
   momentum: MomentumScoreInput;
 }
 
+// ---------------------------------------------------------------------
+// Research Pillars — the engine's actual top-level output. See
+// src/scoring/signal.ts for Signal/SignalState/SignalSource and the full
+// Provider -> Signal -> Pillar -> Overall hierarchy this is built around.
+// ---------------------------------------------------------------------
+
+export type PillarKey = "vc_market_makers" | "business_model" | "tokenomics" | "chart" | "team" | "community";
+
+export type Confidence = "high" | "medium" | "low";
+
+export interface PillarResult {
+  key: PillarKey;
+  value: number | null;
+  completenessPercent: number;
+  /** Derived from this pillar's own present signals — never a single opaque aggregate with no traceable origin. Null when no present signals exist. */
+  freshnessScore: number | null;
+  /** Weakest-link(completeness tier, freshness tier) — never completeness alone. See config.ts confidenceFrom(). */
+  confidence: Confidence;
+  /** The full, untouched signal list that fed this pillar — including any not_applicable/not_implemented ones, which are excluded from value/completenessPercent math but never hidden from this list. */
+  signals: Signal[];
+}
+
 export interface ScoreEngineResult {
-  overallScore: number;
-  grade: Grade;
-  scoreBreakdown: ScoreBreakdown;
-  explanation: ScoreExplanation;
+  overallScore: number | null;
+  overallGrade: Grade | null;
+  overallCompletenessPercent: number;
+  overallFreshnessScore: number | null;
+  overallConfidence: Confidence;
+  /** Always exactly 6, stable order — see signal.ts's SignalKey doc comment for how new signals extend a pillar without changing this list. */
+  pillars: PillarResult[];
 }

@@ -4,13 +4,50 @@
 // pre-joined, no raw Supabase row shapes leak past this module.
 
 import { gradeFromScore, DEFAULT_SCORING_CONFIG } from "../scoring/config";
-import type { Grade } from "../scoring/types";
+import type { Confidence, Grade, PillarKey } from "../scoring/types";
+import type { SignalKey, SignalState } from "../scoring/signal";
 
-export type { Grade };
+export type { Confidence, Grade, PillarKey, SignalKey, SignalState };
 
 // ---------------------------------------------------------------------
 // Shared
 // ---------------------------------------------------------------------
+
+/**
+ * One signal as stored in a pillar's cached breakdown (see
+ * src/scoring/signal.ts's Signal — this is its frontend-ready shape).
+ * `state` is preserved as its own field rather than collapsed into a
+ * null score, so the API/UI can distinguish "missing" from
+ * "not_applicable" from "not_implemented" from "provider_error" — never
+ * a bare null. `rawValue`/`normalizedScore` both survive the same way:
+ * scoring math only ever used `normalizedScore`, but the UI, AI
+ * explanations, and debugging need `rawValue` too.
+ */
+export interface SignalSummaryDto {
+  key: SignalKey;
+  state: SignalState;
+  rawValue: unknown | null;
+  normalizedScore: number | null;
+  providerId: string | null;
+  providerName: string | null;
+  asOfDate: string | null;
+}
+
+/**
+ * One research pillar's aggregated result (see src/scoring/types.ts's
+ * PillarResult) — a DERIVED, deterministic aggregation of `signals`,
+ * never canonical itself. `value`/`completenessPercent`/`freshnessScore`/
+ * `confidence` are exactly what the engine computed at sync time; this
+ * DTO never recomputes them.
+ */
+export interface PillarSummaryDto {
+  key: PillarKey;
+  value: number | null;
+  completenessPercent: number;
+  freshnessScore: number | null;
+  confidence: Confidence;
+  signals: SignalSummaryDto[];
+}
 
 export interface ScoreSummaryDto {
   totalScore: number | null;
@@ -24,6 +61,21 @@ export interface ScoreSummaryDto {
   /** Derived from `totalScore` via the scoring engine's own `gradeFromScore` (src/scoring/config.ts) — never recomputed differently here. Null whenever `totalScore` is null (not yet scored). */
   grade: Grade | null;
   scoreDate: string | null;
+  /**
+   * The 6 research pillars (VC & Market Makers, Business Model,
+   * Tokenomics, Chart, Team, Community), each with its own signals —
+   * read from project_scores.pillar_breakdown, a deterministic CACHE the
+   * scoring-sync pipeline recomputes from signals every run (see
+   * supabase/migrations/014_scoring_pillars.sql). Empty array if the
+   * project hasn't been scored since this column existed.
+   */
+  pillars: PillarSummaryDto[];
+  /** Overall (pillars-combined) completeness, 0-100. Null alongside `pillars: []`. */
+  completenessPercent: number | null;
+  /** Overall (pillars-combined) freshness, 0-100. Null when no present signal anywhere has a timestamp. */
+  freshnessScore: number | null;
+  /** Weakest-link(completeness tier, freshness tier) — never completeness alone. Null alongside `pillars: []`. */
+  confidence: Confidence | null;
 }
 
 /** Strips characters with special meaning in PostgREST filter strings (`,` separates `.or()` conditions; `(`/`)` group them) so free-text search input can never inject extra filter clauses. */

@@ -15,6 +15,8 @@ export interface RawFundingRound {
   amountRaisedUsd: number | null;
   roundType: string | null;
   announcedDate: string | null;
+  /** No `updated_at` on this table — rounds are find-or-create, rarely mutated. Used as the funding/investor signals' freshness timestamp (src/scoring-sync/signal-source.ts). */
+  createdAt: string;
 }
 
 export interface RawFundingInvestor {
@@ -36,12 +38,22 @@ export interface RawProjectMetrics {
   revenue30dUsd: number | null;
   fees24hUsd: number | null;
   fees30dUsd: number | null;
+  /** Maintained by a real Postgres trigger (set_updated_at()), fires on every UPDATE — the market/tvl/revenue/momentum signals' freshness timestamp. */
+  updatedAt: string | null;
 }
 
 export interface RawUnlockEvent {
   unlockDate: string;
   percentOfSupply: number | null;
   amountUsd: number | null;
+  /** No `updated_at` on this table — same reasoning as RawFundingRound.createdAt. Used as the unlock signal's freshness timestamp. */
+  createdAt: string;
+}
+
+/** One provider's registered identity match for a project (project_aliases). Used only for the market/tvl/revenue signals' approximate provider attribution (src/scoring-sync/signal-source.ts) — informational metadata, never affects scoring. */
+export interface RawProjectAlias {
+  provider: string;
+  confidence: number;
 }
 
 export interface ProjectScoringData {
@@ -52,6 +64,8 @@ export interface ProjectScoringData {
   fundingInvestors: RawFundingInvestor[];
   /** Only unlock events on or after `asOf` — see scoring-sync.ts's fetch query. */
   upcomingUnlockEvents: RawUnlockEvent[];
+  /** Every provider that has successfully matched this project, across all metrics providers (coingecko/coinpaprika/dexscreener/defillama). */
+  aliases: RawProjectAlias[];
 }
 
 // ---------------------------------------------------------------------

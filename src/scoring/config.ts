@@ -9,7 +9,8 @@
 // here; this file imports nothing from them. Never the reverse — that
 // would create an import cycle.
 
-import type { Grade, ScoreWeights } from "./types";
+import type { Confidence, Grade, PillarKey, ScoreWeights } from "./types";
+import type { SignalKey } from "./signal";
 
 /** A piecewise-linear curve: interpolated between consecutive points, clamped at the ends. */
 export interface ScoreCurvePoint {
@@ -206,6 +207,110 @@ export function gradeFromScore(score: number, thresholds: GradeThresholds): Grad
   if (score >= thresholds.c) return "C";
   return "D";
 }
+
+// ---------------------------------------------------------------------
+// Freshness — age-in-days -> 0-100 freshness score, same curve-based
+// pattern as every other score in this engine. Fed by Signal.metadata.
+// asOfDate (see signal.ts); a signal's freshness is only meaningful when
+// state === "present" (see adaptive-weighted-average.ts usage in
+// pillars/*.ts — a missing/inapplicable/unimplemented signal has no
+// asOfDate to measure).
+// ---------------------------------------------------------------------
+
+export const DEFAULT_FRESHNESS_CURVE_DAYS: ScoreCurvePoint[] = [
+  { at: 0, score: 100 },
+  { at: 1, score: 95 },
+  { at: 7, score: 80 },
+  { at: 30, score: 50 },
+  { at: 90, score: 20 },
+  { at: 365, score: 0 },
+];
+
+export function freshnessScoreFromAsOfDate(
+  asOfDate: string | null,
+  now: Date = new Date(),
+  curve: ScoreCurvePoint[] = DEFAULT_FRESHNESS_CURVE_DAYS,
+): number | null {
+  if (asOfDate === null) return null;
+  const ageMs = now.getTime() - new Date(asOfDate).getTime();
+  const ageDays = Math.max(0, ageMs / (1000 * 60 * 60 * 24));
+  return interpolateCurve(curve, ageDays);
+}
+
+// ---------------------------------------------------------------------
+// Confidence — weakest-link(completeness tier, freshness tier). Never
+// derived from completeness alone: a pillar/overall result with 100%
+// completeness but 200-day-old data cannot be "High confidence."
+// ---------------------------------------------------------------------
+
+export interface ConfidenceThresholds {
+  /** Minimum percent (inclusive) for "high". */
+  high: number;
+  /** Minimum percent (inclusive) for "medium"; below this is "low". */
+  medium: number;
+}
+
+export const DEFAULT_CONFIDENCE_THRESHOLDS: ConfidenceThresholds = { high: 80, medium: 40 };
+
+function confidenceTierFromPercent(pct: number, thresholds: ConfidenceThresholds): Confidence {
+  if (pct >= thresholds.high) return "high";
+  if (pct >= thresholds.medium) return "medium";
+  return "low";
+}
+
+const CONFIDENCE_RANK: Record<Confidence, number> = { low: 0, medium: 1, high: 2 };
+
+/**
+ * `freshnessScore: null` means nothing was present at all (see
+ * adaptiveWeightedAverage's completenessPercent: 0 case) — confidence is
+ * "low," full stop, since there's nothing to be confident about.
+ * Otherwise, confidence is the WEAKER of the two tiers: high completeness
+ * with stale data is still only as confident as the freshness tier
+ * allows, and vice versa.
+ */
+export function confidenceFrom(
+  completenessPercent: number,
+  freshnessScore: number | null,
+  thresholds: ConfidenceThresholds = DEFAULT_CONFIDENCE_THRESHOLDS,
+): Confidence {
+  if (freshnessScore === null) return "low";
+  const completenessTier = confidenceTierFromPercent(completenessPercent, thresholds);
+  const freshnessTier = confidenceTierFromPercent(freshnessScore, thresholds);
+  return CONFIDENCE_RANK[completenessTier] <= CONFIDENCE_RANK[freshnessTier] ? completenessTier : freshnessTier;
+}
+
+// ---------------------------------------------------------------------
+// Research Pillars — which signals feed each pillar, and at what weight
+// (Signal -> Pillar), plus how the 6 pillars combine into the overall
+// score (Pillar -> Overall). Both steps use the same adaptiveWeightedAverage
+// utility (src/scoring/pillars/compose-pillar.ts, src/scoring/score-engine.ts)
+// — these weight tables are the only per-pillar tuning surface, same
+// "every tunable constant lives in config.ts" convention as everything
+// else here. team/community's weight here is inert today (their one
+// signal is always "not_implemented," so their PillarResult.value is
+// always null and they're excluded from the overall average regardless
+// of weight) — set now for when a real signal eventually lands there,
+// not because it does anything yet.
+// ---------------------------------------------------------------------
+
+export const PILLAR_SIGNAL_WEIGHTS: Record<PillarKey, Partial<Record<SignalKey, number>>> = {
+  vc_market_makers: { funding: 0.5, investor: 0.5, market_maker: 0 },
+  business_model: { market: 0.45, tvl: 0.35, revenue: 0.2 },
+  tokenomics: { unlock: 1 },
+  chart: { momentum: 1 },
+  team: { team: 1 },
+  community: { community: 1 },
+};
+
+/** Sums to 1. Rebalanced from the old flat 7-weight scheme (funding 20 + investor 20 = 40% -> vc_market_makers 30%; market 20 + tvl 15 + revenue 10 = 45% -> business_model 35%; unlock 5% -> tokenomics 10%; momentum 10% -> chart 10%) to carve out room for team/community, which are inert until they have a real signal. */
+export const OVERALL_PILLAR_WEIGHTS: Record<PillarKey, number> = {
+  vc_market_makers: 0.3,
+  business_model: 0.35,
+  tokenomics: 0.1,
+  chart: 0.1,
+  team: 0.075,
+  community: 0.075,
+};
 
 // ---------------------------------------------------------------------
 // Top-level config bundle + defaults

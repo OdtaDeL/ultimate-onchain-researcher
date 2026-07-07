@@ -11,6 +11,19 @@ import { useProject } from "@/lib/api/hooks";
 import { useIsWatchlisted, useWatchlistActions, useIsFavorited, useFavoritesActions } from "@/store";
 import { cn, toSlug } from "@/lib/utils";
 import { radius, scoreGradeColor, typography } from "@/lib/theme";
+import type { Confidence } from "@/lib/api/dto";
+
+const confidencePillVariant: Record<Confidence, "success" | "warning" | "danger"> = {
+  high: "success",
+  medium: "warning",
+  low: "danger",
+};
+
+const confidenceLabel: Record<Confidence, string> = {
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
 
 function openExternalUrl(url: string): void {
   if (window.Telegram?.WebApp?.openLink) {
@@ -165,9 +178,25 @@ export default function ProjectDetailPage() {
             <Section className="px-4">
               <Accordion
                 title="Scoring Breakdown"
-                trailing={overallCategory && project.grade !== null ? <Pill variant="neutral" className={scoreGradeColor[project.grade].text}>{project.grade}</Pill> : null}
+                trailing={
+                  overallCategory && project.grade !== null ? (
+                    <div className="flex items-center gap-1.5">
+                      {project.confidence !== null ? (
+                        <Pill variant={confidencePillVariant[project.confidence]}>
+                          {confidenceLabel[project.confidence]}
+                        </Pill>
+                      ) : null}
+                      <Pill variant="neutral" className={scoreGradeColor[project.grade].text}>{project.grade}</Pill>
+                    </div>
+                  ) : null
+                }
               >
                 <div className="flex flex-col gap-3 pb-3">
+                  {project.completenessPercent !== null ? (
+                    <p className={cn(typography.caption.className, "text-muted-foreground")}>
+                      Data completeness: {project.completenessPercent}%
+                    </p>
+                  ) : null}
                   {/* Radar renders nothing below 3 axes — falls through to bars alone. */}
                   <ScoreRadarChart categories={subCategories} />
                   {[...subCategories, ...(overallCategory ? [overallCategory] : [])].map((category) => (

@@ -14,6 +14,8 @@ const EMPTY_PROJECT_DATA: ProjectData = {
     category: null,
     score: null,
     grade: null,
+    completenessPercent: null,
+    confidence: null,
     marketCap: null,
     fdv: null,
     tvl: null,

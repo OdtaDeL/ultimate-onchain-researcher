@@ -1,20 +1,24 @@
 // Revenue Score — pure function of revenue/fee facts only. Never reads
-// any other score's output.
+// any other score's output. Returns null when there isn't enough data to
+// compute a meaningful score — see adaptive-weighted-average.ts's header.
 
-import { clampScore, interpolateCurve, DEFAULT_SCORING_CONFIG, type RevenueScoreConfig } from "./config";
+import { adaptiveWeightedAverage } from "./adaptive-weighted-average";
+import { interpolateCurve, DEFAULT_SCORING_CONFIG, type RevenueScoreConfig } from "./config";
 import type { RevenueScoreInput } from "./types";
 
 export function calculateRevenueScore(
   input: RevenueScoreInput,
   config: RevenueScoreConfig = DEFAULT_SCORING_CONFIG.revenue,
-): number {
-  const revenueScore = interpolateCurve(config.revenueCurveUsd, input.revenue24hUsd ?? 0);
-  const feesScore = interpolateCurve(config.feesCurveUsd, input.fees24hUsd ?? 0);
+): number | null {
+  const revenueScore =
+    input.revenue24hUsd === null ? null : interpolateCurve(config.revenueCurveUsd, input.revenue24hUsd);
+  const feesScore = input.fees24hUsd === null ? null : interpolateCurve(config.feesCurveUsd, input.fees24hUsd);
 
   // Trend: today's revenue vs. its trailing 30-day daily average.
-  // Undefined when either side is missing or the 30d total is 0 (a
-  // genuinely revenue-less protocol, not a divide-by-zero to mask).
-  let trendScore = 50;
+  // Excluded (not a fabricated neutral 50) when either side is missing
+  // or the 30d total is 0 (a genuinely revenue-less protocol would divide
+  // by zero, not signal "no data").
+  let trendScore: number | null = null;
   if (input.revenue24hUsd !== null && input.revenue30dUsd !== null && input.revenue30dUsd > 0) {
     const dailyAverage = input.revenue30dUsd / 30;
     const percentDelta = ((input.revenue24hUsd - dailyAverage) / dailyAverage) * 100;
@@ -22,7 +26,11 @@ export function calculateRevenueScore(
   }
 
   const { revenue, fees, trend } = config.subWeights;
-  const combined = revenueScore * revenue + feesScore * fees + trendScore * trend;
+  const { value } = adaptiveWeightedAverage([
+    { key: "revenue", value: revenueScore, weight: revenue },
+    { key: "fees", value: feesScore, weight: fees },
+    { key: "trend", value: trendScore, weight: trend },
+  ]);
 
-  return clampScore(combined);
+  return value;
 }

@@ -15,7 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../types/database.types";
 import { runScoreEngine } from "../scoring/score-engine";
-import { buildScoreEngineInput } from "./mapper";
+import { buildSignals } from "./signal-source";
 import { buildSyncReport, emptyTally, tallyFailure, tallyUpsertResult, type ReportTally } from "./report";
 import { refreshAllMaterializedViews } from "./refresh-materialized-views";
 import { ScoringUpsertService } from "./upsert-service";
@@ -23,6 +23,7 @@ import type {
   ProjectScoringData,
   RawFundingInvestor,
   RawFundingRound,
+  RawProjectAlias,
   RawUnlockEvent,
   ScoringSyncOptions,
   ScoringSyncReport,
@@ -82,37 +83,100 @@ async function loadProjectScoringData(
   const asOfIso = toIsoDate(asOf);
 
   // Full table scans — `.in()` with thousands of UUIDs exceeds PostgREST's
-  // GET URL length limit (~8 KB). project_metrics and token_unlock_events
-  // are small enough for a full scan; funding_rounds turned out not to be
-  // (ChainBroker's global feed alone is ~3,900 rounds — see
-  // src/providers/chainbroker/SOURCE.md), so the funding_investors lookup
-  // below batches its own `.in()` call instead. The in-memory Map below
-  // filters results to only the requested targets.
-  const [metricsResult, fundingRoundsResult, unlockEventsResult] = await Promise.all([
-    supabase
+  // GET URL length limit (~8 KB), so all four of these are fetched in
+  // full instead. PostgREST also caps every response at 1,000 rows
+  // server-side regardless of any client-side `.limit()` call — project_metrics
+  // (1,578 rows) and funding_rounds (1,783 rows) both exceed that, so a
+  // plain `.limit(10_000)` here silently truncated to the first 1,000
+  // rows in an unspecified order, dropping arbitrary projects' data
+  // entirely (caught via a real project whose market signal came back
+  // "missing" despite having real project_metrics). Paginated via
+  // `.range()`, same fix already applied to project_aliases below and to
+  // src/identity/resolver.ts for the identical behavior. The in-memory
+  // Map below filters results to only the requested targets.
+  const PAGE = 1_000;
+
+  const metricsRows: {
+    project_id: string;
+    market_cap: number | null;
+    fdv: number | null;
+    volume_24h: number | null;
+    price_change_24h: number | null;
+    price_change_7d: number | null;
+    price_change_30d: number | null;
+    tvl: number | null;
+    tvl_change_1d: number | null;
+    tvl_change_7d: number | null;
+    revenue_24h: number | null;
+    revenue_30d: number | null;
+    fees_24h: number | null;
+    fees_30d: number | null;
+    updated_at: string | null;
+  }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
       .from("project_metrics")
       .select(
-        "project_id, market_cap, fdv, volume_24h, price_change_24h, price_change_7d, price_change_30d, tvl, tvl_change_1d, tvl_change_7d, revenue_24h, revenue_30d, fees_24h, fees_30d",
+        "project_id, market_cap, fdv, volume_24h, price_change_24h, price_change_7d, price_change_30d, tvl, tvl_change_1d, tvl_change_7d, revenue_24h, revenue_30d, fees_24h, fees_30d, updated_at",
       )
-      .limit(10_000),
-    supabase
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Failed to load project_metrics (offset ${from}): ${error.message}`);
+    metricsRows.push(...data);
+    if (data.length < PAGE) break;
+  }
+
+  const fundingRoundsRows: {
+    id: string;
+    project_id: string;
+    amount_raised: number | null;
+    round_type: string | null;
+    announced_date: string | null;
+    created_at: string;
+  }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
       .from("funding_rounds")
-      .select("id, project_id, amount_raised, round_type, announced_date")
-      .limit(10_000),
-    supabase
+      .select("id, project_id, amount_raised, round_type, announced_date, created_at")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Failed to load funding_rounds (offset ${from}): ${error.message}`);
+    fundingRoundsRows.push(...data);
+    if (data.length < PAGE) break;
+  }
+
+  const unlockEventsRows: {
+    project_id: string;
+    unlock_date: string;
+    percent_of_supply: number | null;
+    amount_usd: number | null;
+    created_at: string;
+  }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
       .from("token_unlock_events")
-      .select("project_id, unlock_date, percent_of_supply, amount_usd")
+      .select("project_id, unlock_date, percent_of_supply, amount_usd, created_at")
       .gte("unlock_date", asOfIso)
-      .limit(10_000),
-  ]);
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Failed to load token_unlock_events (offset ${from}): ${error.message}`);
+    unlockEventsRows.push(...data);
+    if (data.length < PAGE) break;
+  }
 
-  if (metricsResult.error) throw new Error(`Failed to load project_metrics: ${metricsResult.error.message}`);
-  if (fundingRoundsResult.error)
-    throw new Error(`Failed to load funding_rounds: ${fundingRoundsResult.error.message}`);
-  if (unlockEventsResult.error)
-    throw new Error(`Failed to load token_unlock_events: ${unlockEventsResult.error.message}`);
+  // project_aliases can exceed PostgREST's 1,000-row response cap too
+  // (e.g. CoinGecko alone has matched 2,300+ projects) — used only for
+  // signal-source.ts's approximate provider attribution (informational
+  // metadata, never affects scoring).
+  const aliasRows: { project_id: string; provider: string; confidence: number }[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supabase
+      .from("project_aliases")
+      .select("project_id, provider, confidence")
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`Failed to load project_aliases (offset ${from}): ${error.message}`);
+    aliasRows.push(...data);
+    if (data.length < PAGE) break;
+  }
 
-  const fundingRoundIds = fundingRoundsResult.data.map((r) => r.id);
+  const fundingRoundIds = fundingRoundsRows.map((r) => r.id);
   // Batched to stay under PostgREST's ~8 KB GET URL length limit — a UUID
   // is 36 chars, so 200 IDs per `.in()` call stays comfortably inside it.
   const FUNDING_ROUND_ID_BATCH_SIZE = 200;
@@ -127,13 +191,18 @@ async function loadProjectScoringData(
     fundingInvestorsData.push(...data);
   }
 
-  const fundingRoundProjectById = new Map(fundingRoundsResult.data.map((r) => [r.id, r.project_id]));
+  const fundingRoundProjectById = new Map(fundingRoundsRows.map((r) => [r.id, r.project_id]));
 
-  const metricsByProject = new Map(metricsResult.data.map((m) => [m.project_id, m]));
+  const metricsByProject = new Map(metricsRows.map((m) => [m.project_id, m]));
   const fundingRoundsByProject = new Map<string, RawFundingRound[]>();
-  for (const r of fundingRoundsResult.data) {
+  for (const r of fundingRoundsRows) {
     const list = fundingRoundsByProject.get(r.project_id) ?? [];
-    list.push({ amountRaisedUsd: r.amount_raised, roundType: r.round_type, announcedDate: r.announced_date });
+    list.push({
+      amountRaisedUsd: r.amount_raised,
+      roundType: r.round_type,
+      announcedDate: r.announced_date,
+      createdAt: r.created_at,
+    });
     fundingRoundsByProject.set(r.project_id, list);
   }
   const fundingInvestorsByProject = new Map<string, RawFundingInvestor[]>();
@@ -145,10 +214,21 @@ async function loadProjectScoringData(
     fundingInvestorsByProject.set(projectId, list);
   }
   const unlockEventsByProject = new Map<string, RawUnlockEvent[]>();
-  for (const e of unlockEventsResult.data) {
+  for (const e of unlockEventsRows) {
     const list = unlockEventsByProject.get(e.project_id) ?? [];
-    list.push({ unlockDate: e.unlock_date, percentOfSupply: e.percent_of_supply, amountUsd: e.amount_usd });
+    list.push({
+      unlockDate: e.unlock_date,
+      percentOfSupply: e.percent_of_supply,
+      amountUsd: e.amount_usd,
+      createdAt: e.created_at,
+    });
     unlockEventsByProject.set(e.project_id, list);
+  }
+  const aliasesByProject = new Map<string, RawProjectAlias[]>();
+  for (const a of aliasRows) {
+    const list = aliasesByProject.get(a.project_id) ?? [];
+    list.push({ provider: a.provider, confidence: a.confidence });
+    aliasesByProject.set(a.project_id, list);
   }
 
   const byProjectId = new Map<string, ProjectScoringData>();
@@ -172,11 +252,13 @@ async function loadProjectScoringData(
             revenue30dUsd: m.revenue_30d,
             fees24hUsd: m.fees_24h,
             fees30dUsd: m.fees_30d,
+            updatedAt: m.updated_at,
           }
         : null,
       fundingRounds: fundingRoundsByProject.get(target.id) ?? [],
       fundingInvestors: fundingInvestorsByProject.get(target.id) ?? [],
       upcomingUnlockEvents: unlockEventsByProject.get(target.id) ?? [],
+      aliases: aliasesByProject.get(target.id) ?? [],
     });
   }
   return byProjectId;
@@ -208,8 +290,8 @@ export async function runScoringSync(
       continue;
     }
     try {
-      const input = buildScoreEngineInput(data, asOf);
-      const result = runScoreEngine(input);
+      const signals = buildSignals(data, asOf);
+      const result = runScoreEngine(signals, undefined, asOf);
       const outcome = await upsertService.upsertProjectScore(target.id, scoreDate, result);
       tally = tallyUpsertResult(tally, outcome);
     } catch {

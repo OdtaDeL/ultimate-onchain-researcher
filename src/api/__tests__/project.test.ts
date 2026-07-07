@@ -37,6 +37,42 @@ function buildSupabase() {
         momentum_score: 65,
         total_score: 76,
         score_date: "2026-06-25",
+        pillar_breakdown: [
+          {
+            key: "business_model",
+            value: 75,
+            completenessPercent: 80,
+            freshnessScore: 90,
+            confidence: "high",
+            signals: [
+              {
+                key: "market",
+                state: "present",
+                rawValue: 1_000_000_000,
+                normalizedScore: 75,
+                metadata: { providerId: "coinpaprika", providerName: "CoinPaprika", asOfDate: "2026-06-26T00:00:00.000Z", sourcePriority: 1, version: null },
+              },
+            ],
+          },
+          {
+            key: "team",
+            value: null,
+            completenessPercent: 0,
+            freshnessScore: null,
+            confidence: "low",
+            signals: [
+              {
+                key: "team",
+                state: "not_implemented",
+                rawValue: null,
+                normalizedScore: null,
+                metadata: { providerId: null, providerName: null, asOfDate: null, sourcePriority: null, version: null },
+              },
+            ],
+          },
+        ],
+        data_completeness_percent: 85,
+        data_freshness_score: 92,
       },
       error: null,
     }),
@@ -89,6 +125,20 @@ test("GET /api/projects/:slug returns overview, funding, metrics, and unlocks", 
   assert.equal(body.data.funding.rounds[0].investors[0].slug, "acme-capital");
   assert.equal(body.data.metrics.marketCapUsd, 1_000_000_000);
   assert.equal(body.data.unlocks.unlocks[0].unlockType, "Team");
+
+  // Research-pillar breakdown (Phase 6): pillars/completeness/freshness/
+  // confidence all come through, and a not_implemented signal (Team)
+  // stays distinguishable rather than collapsing into a bare null.
+  assert.equal(body.data.overview.score.completenessPercent, 85);
+  assert.equal(body.data.overview.score.freshnessScore, 92);
+  assert.equal(body.data.overview.score.confidence, "high");
+  assert.equal(body.data.overview.score.pillars.length, 2);
+  const businessModel = body.data.overview.score.pillars.find((p: { key: string }) => p.key === "business_model");
+  assert.equal(businessModel.value, 75);
+  assert.equal(businessModel.signals[0].rawValue, 1_000_000_000);
+  const team = body.data.overview.score.pillars.find((p: { key: string }) => p.key === "team");
+  assert.equal(team.value, null);
+  assert.equal(team.signals[0].state, "not_implemented");
 });
 
 test("GET /api/projects/:slug returns 404 for an unknown slug", async () => {

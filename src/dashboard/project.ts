@@ -4,15 +4,48 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../types/database.types";
+import { confidenceFrom } from "../scoring/config";
+import type { Signal } from "../scoring/signal";
+import type { PillarResult } from "../scoring/types";
 import { deriveGrade } from "./types";
 import type {
+  PillarSummaryDto,
   ProjectFundingDto,
   ProjectFundingInvestorDto,
   ProjectFundingRoundDto,
   ProjectMetricsDto,
   ProjectOverviewDto,
   ProjectUnlocksDto,
+  SignalSummaryDto,
 } from "./types";
+
+/**
+ * project_scores.pillar_breakdown is a cache snapshot of
+ * ScoreEngineResult.pillars (see supabase/migrations/014_scoring_pillars.sql)
+ * — read-only here, never recomputed or written back. `Signal[]` is
+ * mapped field-for-field into SignalSummaryDto so every non-`present`
+ * state stays distinguishable (never collapsed into a bare null).
+ */
+function toPillarSummaryDto(pillar: PillarResult): PillarSummaryDto {
+  return {
+    key: pillar.key,
+    value: pillar.value,
+    completenessPercent: pillar.completenessPercent,
+    freshnessScore: pillar.freshnessScore,
+    confidence: pillar.confidence,
+    signals: pillar.signals.map(
+      (signal: Signal): SignalSummaryDto => ({
+        key: signal.key,
+        state: signal.state,
+        rawValue: signal.rawValue,
+        normalizedScore: signal.normalizedScore,
+        providerId: signal.metadata.providerId,
+        providerName: signal.metadata.providerName,
+        asOfDate: signal.metadata.asOfDate,
+      }),
+    ),
+  };
+}
 
 /**
  * Identity, profile fields, and latest score/rank for one project. Null
@@ -39,7 +72,7 @@ export async function getProjectOverview(
     supabase
       .from("project_scores")
       .select(
-        "funding_score, investor_score, market_score, tvl_score, revenue_score, unlock_score, momentum_score, total_score, score_date",
+        "funding_score, investor_score, market_score, tvl_score, revenue_score, unlock_score, momentum_score, total_score, score_date, pillar_breakdown, data_completeness_percent, data_freshness_score",
       )
       .eq("project_id", project.id)
       .order("score_date", { ascending: false })
@@ -77,6 +110,16 @@ export async function getProjectOverview(
           momentumScore: score.momentum_score,
           grade: deriveGrade(score.total_score),
           scoreDate: score.score_date,
+          // pillar_breakdown is a cache — see toPillarSummaryDto's header.
+          // null/missing on rows scored before 014_scoring_pillars.sql.
+          pillars: (score.pillar_breakdown as unknown as PillarResult[] | null)?.map(toPillarSummaryDto) ?? [],
+          completenessPercent: score.data_completeness_percent,
+          freshnessScore: score.data_freshness_score,
+          // Derived on read, never persisted — same convention as `grade`.
+          confidence:
+            score.data_completeness_percent === null
+              ? null
+              : confidenceFrom(score.data_completeness_percent, score.data_freshness_score),
         }
       : null,
     rank: rankResult.data?.rank ?? null,
